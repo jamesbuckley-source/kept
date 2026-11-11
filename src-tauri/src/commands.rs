@@ -6,6 +6,8 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -205,6 +207,12 @@ pub fn capture_whole_screen(app: AppHandle, state: State<'_, AppState>) -> Resul
     start_capture(app, state, capture::capture_screen)
 }
 
+/// Hides the window and captures the area the last screenshot covered.
+#[tauri::command]
+pub fn capture_previous_area(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    start_capture(app, state, capture::capture_previous)
+}
+
 /// Picks a window, scrolls it a page at a time and stores the stitched result.
 #[tauri::command]
 pub fn capture_scrolling_window(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
@@ -225,6 +233,9 @@ pub fn run_capture_shortcut(app: &AppHandle, action: crate::hotkey::CaptureActio
         crate::hotkey::CaptureAction::Color => pick_screen_color(app.clone(), state),
         crate::hotkey::CaptureAction::Ruler => {
             crate::ruler::open(app.clone(), state.store.settings())
+        }
+        crate::hotkey::CaptureAction::PreviousArea => {
+            capture_previous_area(app.clone(), state)
         }
     };
     if let Err(e) = started {
@@ -978,7 +989,7 @@ async fn palette_of(state: &AppState, id: i64) -> Result<Vec<String>> {
         media::load_rgba_thumbnail(&dir, &name, PALETTE_IMAGE_EDGE)
     })
     .await
-    .map_err(|e| AppError::msg(format!("colour extraction failed: {e}")))??;
+    .map_err(|e| AppError::msg(format!("color extraction failed: {e}")))??;
     let (width, height, rgba) = decoded;
     let colors = crate::palette::extract(&rgba, width, height);
     if !colors.is_empty() {
@@ -1065,10 +1076,10 @@ pub async fn add_scheme_color(
         media::load_rgba_thumbnail(&dir, &name, SAMPLE_IMAGE_EDGE)
     })
     .await
-    .map_err(|e| AppError::msg(format!("colour sampling failed: {e}")))??;
+    .map_err(|e| AppError::msg(format!("color sampling failed: {e}")))??;
     let (width, height, rgba) = decoded;
     let hex = crate::palette::sample(&rgba, width, height, x, y)
-        .ok_or_else(|| AppError::msg("that spot has no colour to pick"))?;
+        .ok_or_else(|| AppError::msg("that spot has no color to pick"))?;
     let (colors, added) = state.store.add_palette_color(id, &hex)?;
     Ok(PickedColor { hex, added, colors })
 }
@@ -1310,6 +1321,64 @@ pub fn copy_video_url(
         .ok_or_else(|| AppError::msg("the address this video came from was not recorded"))?;
     let hash = clipboard::write(&ClipContent::Text(url))?;
     finish_media_copy(&app, &state, &store, id, hash, hide_window)
+}
+
+/// Puts the file path a video is stored at on the clipboard as plain text.
+#[tauri::command]
+pub fn copy_video_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    hide_window: Option<bool>,
+) -> Result<()> {
+    let store = Arc::clone(&state.store);
+    let path = store
+        .video_path(id)
+        .ok_or_else(|| AppError::msg("this clip has no stored video file"))?;
+    let hash = clipboard::write(&ClipContent::Text(
+        path.to_string_lossy().into_owned(),
+    ))?;
+    finish_media_copy(&app, &state, &store, id, hash, hide_window)
+}
+
+/// Copies the still frame a video card shows rather than the video file.
+///
+/// The menu offers this because the frame is what the list already shows, and a
+/// still is often all a chat target wants.
+#[tauri::command]
+pub fn copy_clip_thumbnail(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    hide_window: Option<bool>,
+) -> Result<()> {
+    let store = Arc::clone(&state.store);
+    let detail = store.detail(id)?;
+    let name = detail
+        .summary
+        .image_file
+        .ok_or_else(|| AppError::msg("this clip has no still image to copy"))?;
+    let (width, height, rgba) = media::load_rgba(store.media_dir(), &name)?;
+    let hash = clipboard::write(&ClipContent::Image {
+        width,
+        height,
+        rgba,
+    })?;
+    finish_media_copy(&app, &state, &store, id, hash, hide_window)
+}
+
+/// Opens the clip's own file in its folder with the file selected.
+///
+/// A video reveals the video rather than the still frame stored beside it, and a
+/// file list reveals its first path (or the folder when that path is gone).
+#[tauri::command]
+pub fn reveal_save_location(state: State<'_, AppState>, id: i64) -> Result<()> {
+    let path = match state.store.video_path(id) {
+        Some(video) => video,
+        None => state.store.reveal_path(id)?,
+    };
+    tauri_plugin_opener::reveal_item_in_dir(&path)
+        .map_err(|e| AppError::msg(format!("could not show {}: {e}", path.display())))
 }
 
 /// The tail every "copy one part of this clip" command shares: latch the watcher
@@ -1982,6 +2051,12 @@ pub fn update_settings(
 
     if after.always_on_top != before.always_on_top {
         crate::window::set_always_on_top(&app, after.always_on_top);
+    }
+
+    // A new theme changes the colour the native window paints behind the page, so
+    // the next window to open has no flash of the old one.
+    if after.theme != before.theme {
+        crate::window::apply_theme_background(&app);
     }
 
     // The settings window is a separate webview; without this the main window
@@ -2743,7 +2818,12 @@ pub fn save_clips(
 ///
 /// The clip stays as it is: an export is a copy in another format, not a new clip.
 #[tauri::command]
-pub fn export_gif(state: State<'_, AppState>, id: i64, path: String) -> Result<String> {
+pub async fn export_gif(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    path: String,
+) -> Result<String> {
     let target = std::path::PathBuf::from(path.trim());
     if !target.is_absolute() {
         return Err(AppError::msg("choose an absolute file path"));
@@ -2765,15 +2845,36 @@ pub fn export_gif(state: State<'_, AppState>, id: i64, path: String) -> Result<S
             "exporting a GIF needs FFmpeg, which was not found. Install it from Settings → Screen Recording.",
         )
     })?;
-    recorder::gif(
-        &ffmpeg,
-        &video,
-        &target,
-        settings.gif_export_fps,
-        settings.gif_export_width,
-    )?;
-    log::info!("exported clip {id} as a GIF to {}", target.display());
-    Ok(target.to_string_lossy().into_owned())
+    let (fps, width) = (settings.gif_export_fps, settings.gif_export_width);
+    let written = target.to_string_lossy().into_owned();
+
+    // Off the main thread: an encoding pass is minutes of work, and a synchronous
+    // command would hold the window's message loop for all of it.
+    let job = begin_gif_job();
+    let cancel = Arc::clone(&job);
+    let filed = tauri::async_runtime::spawn_blocking(move || {
+        let report = |percent: u8| {
+            let _ = app.emit(
+                EVENT_GIF_PROGRESS,
+                serde_json::json!({ "id": id, "percent": percent }),
+            );
+        };
+        recorder::gif_with_cancel(
+            &ffmpeg,
+            &video,
+            &target,
+            fps,
+            width,
+            &report,
+            Some(&cancel),
+        )
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("the GIF conversion could not run: {e}")))?;
+    end_gif_job(&job);
+    filed?;
+    log::info!("exported clip {id} as a GIF to {written}");
+    Ok(written)
 }
 
 /// Emitted while a video is being turned into a GIF, as a percentage.
@@ -2786,7 +2887,7 @@ pub const EVENT_GIF_PROGRESS: &str = "gif:progress";
 /// the list shows is what the moving image starts with. Progress goes out as
 /// [`EVENT_GIF_PROGRESS`] because the conversion can take a while for a long clip.
 #[tauri::command]
-pub fn export_gif_clip(
+pub async fn export_gif_clip(
     app: AppHandle,
     state: State<'_, AppState>,
     id: i64,
@@ -2809,17 +2910,32 @@ pub fn export_gif_clip(
     // folder until there is a clip to name it after.
     let work = std::env::temp_dir().join(format!("kept-gif-{id}-{}", std::process::id()));
     std::fs::create_dir_all(&work)?;
+    let cleanup = work.clone();
     let out = work.join("clip.gif");
     let (width, fps) = quality.size();
-    let report = |percent: u8| {
-        let _ = app.emit(
-            EVENT_GIF_PROGRESS,
-            serde_json::json!({ "id": id, "percent": percent }),
-        );
-    };
 
-    let converted = recorder::gif_with_progress(&ffmpeg, &video, &out, fps, width, &report);
-    let filed = converted.and_then(|()| {
+    // Off the main thread: the conversion, its poster and filing the new clip are
+    // all blocking work, and a synchronous command would freeze the window for the
+    // whole of a large conversion.
+    let job = begin_gif_job();
+    let cancel = Arc::clone(&job);
+    let report_app = app.clone();
+    let filed = tauri::async_runtime::spawn_blocking(move || {
+        let report = |percent: u8| {
+            let _ = report_app.emit(
+                EVENT_GIF_PROGRESS,
+                serde_json::json!({ "id": id, "percent": percent }),
+            );
+        };
+        recorder::gif_with_cancel(
+            &ffmpeg,
+            &video,
+            &out,
+            fps,
+            width,
+            &report,
+            Some(&cancel),
+        )?;
         let poster = work.join("poster.png");
         recorder::poster(&ffmpeg, &out, &poster)?;
         let (width, height, rgba) = media::load_rgba(&work, "poster.png")?;
@@ -2837,18 +2953,65 @@ pub fn export_gif_clip(
         let bytes = std::fs::read(&out)?;
         store.attach_motion(new_id, crate::animated::MotionKind::Gif, &bytes)?;
         store.refresh(new_id)?;
-        Ok(new_id)
-    });
-    let _ = std::fs::remove_dir_all(&work);
+        Ok::<i64, AppError>(new_id)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("the GIF conversion could not run: {e}")))?;
+    end_gif_job(&job);
+    let _ = std::fs::remove_dir_all(&cleanup);
     let new_id = filed?;
 
     notify_history_changed(&app);
-    report(100);
+    let _ = app.emit(
+        EVENT_GIF_PROGRESS,
+        serde_json::json!({ "id": id, "percent": 100 }),
+    );
     log::info!(
         "clip {id} became a {} GIF: clip {new_id}",
         quality.label()
     );
     Ok(new_id)
+}
+
+/// The conversion the Cancel button would stop, if one is running.
+///
+/// One slot: the interface shows one progress bar, and a second conversion starts
+/// its own job. The bar is keyed by clip id, so the newer conversion never moves
+/// the older one's percentage.
+static GIF_JOB: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+fn begin_gif_job() -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    match GIF_JOB.lock() {
+        Ok(mut slot) => *slot = Some(Arc::clone(&flag)),
+        Err(e) => log::warn!("could not record the GIF job: {e}"),
+    }
+    flag
+}
+
+/// Clears the slot, but only when it still holds this job.
+fn end_gif_job(flag: &Arc<AtomicBool>) {
+    match GIF_JOB.lock() {
+        Ok(mut slot) => {
+            if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, flag)) {
+                *slot = None;
+            }
+        }
+        Err(e) => log::warn!("could not clear the GIF job: {e}"),
+    }
+}
+
+/// Stops the GIF conversion in flight. Does nothing when nothing is converting.
+#[tauri::command]
+pub fn cancel_gif_export() {
+    match GIF_JOB.lock() {
+        Ok(slot) => {
+            if let Some(flag) = slot.as_ref() {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+        Err(e) => log::warn!("could not reach the GIF job: {e}"),
+    }
 }
 
 /// Writes one Markdown note per text clip, skipping images and file lists.

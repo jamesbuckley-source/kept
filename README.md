@@ -90,6 +90,7 @@ retention, theme and sounds. It can be re-run from Settings at any time.*
 - **Pastes back** on demand into whatever you were working in (opt-in; off by default).
 - **Pauses capture** on demand — a private mode for 15 minutes, an hour, or until restart.
 - **Finds things with operators** — `kind:image`, `tag:invoice`, `app:code`, `before:2024-05-01`,
+  `day:2024-05-01`,
   `color:#ff8800`, `in:archive` — and saves any query to the sidebar as a smart view.
 - **Acts on what it recognises**: links open in the browser, paths open or reveal in Explorer,
   JSON can be pretty-printed, colors come with their hex and `rgb()` values. Recognised rows also
@@ -180,8 +181,9 @@ old `%APPDATA%\com.copypaste.app` folder is left in place, so a rollback still w
 Both, by design:
 
 - **Tray icon** for the lifetime of the process. Left click toggles the overlay; right click is a
-  full menu: *New clip…*; a **Capture** submenu with *Region*, *Window*, *Full screen*, *Scrolling*,
-  *Colour picker* and *Onscreen ruler*; **Pause capture** with *15 minutes*, *1 hour* and *Until restart*; *Settings…*;
+  full menu: *New clip…*; *Color Picker*; *Onscreen ruler*; a **Capture** submenu with *Region*,
+  *Window*, *Full screen*, *Scrolling* and *Previous area*; **Pause capture** with *15 minutes*,
+  *1 hour* and *Until restart*; *Settings…*;
   *Data folder*; and *Quit*. The menu is rebuilt as things change, so *Pause capture* becomes
   *Resume capture (12 min left)* while a pause runs and *Lock vault* appears only while the vault is
   open. The tooltip carries the same pause state.
@@ -247,12 +249,17 @@ recognise stays part of the text query, so a stray colon never makes results van
 | `collection:` | `collection:Work` | Clips filed in that collection |
 | `app:` | `app:chrome` | Substring match on the source application |
 | `before:` | `before:2026-05-01` | Captured before that date |
+| `day:` | `day:2026-05-01` | Captured on that day only |
 | `color:` | `color:#ff8800` | Exact color match |
 | `pinned:` | `pinned:yes` | Pinned clips only |
 | `in:archive` | `kind:image in:archive` | Also reach clips kept in an archive |
 
 Each operator appears as a chip under the input; click a chip to drop it. The **Archives** button
 next to the sort dropdown does the same thing without typing.
+
+The calendar icon inside the search field opens a date picker. Picking a day adds a `day:` token —
+one calendar day, from local midnight to the next, so a daylight-saving change does not shave an
+hour off either end — and **Clear** in the picker removes it. The rest of the query is left alone.
 
 **Save** turns the current query into a sidebar entry under *Saved searches*. Saved searches are
 stored with the rest of the settings, re-run with one click, and can be renamed or deleted from
@@ -551,6 +558,10 @@ left where the editor put it.
 | Preview pane | shown | Collapse it with the chevron at the pane's top-left; the filter sidebar has its own chevron at its top-right. Its left edge drags to resize, and stops at the width where its own buttons still fit |
 | Theme | Dark | Dark, Light, or Custom with a color picker per token |
 
+Every window paints the theme's canvas color natively before its page draws, so opening Settings, a
+sticky clip or the paste stack never flashes the platform's default background first. The capture
+overlays keep their transparency and are left alone.
+
 Each sidebar category (All clips, Text, Media, Files, Pinned, and collections/tags together) keeps
 its own layout and card size: switching to cards for Media does not drag Text along with it, and
 media starts in cards because a thumbnail grid is how you actually recognise a screenshot. Like the
@@ -564,13 +575,19 @@ both the sidebar and the preview pane are drag handles: drop one on another and 
 and the order is kept. The Text
 row's chevron reveals Link, Email, Path, JSON and Secrets sub-views; double-clicking anywhere on
 the row does the same, and the choice is remembered. **Media** works the same way and expands into
-five views: **Images (All)** — every image clip, screenshots and recordings included —
-**Screenshots**, every capture the app's screenshot buttons have taken, recognised by the
-“Screenshot” source the capture path records — **Screen recordings**, the clips the record button
+five views: **Images (All)** — every image clip, screenshots and recordings included, plus copied
+image files — **Screenshots**, every capture the app's screenshot buttons have taken, recognised by
+the “Screenshot” source the capture path records — **Screen recordings**, the clips the record button
 made, recognised by their “Screen recording” source — **People**, the images the local face detector
 found a face in — **GIFs**, the clips whose animated GIF was recovered from a copy — and **Video**,
 the clips whose recovered asset is a video. Both GIF and Video views cover every clip kind, so a
 pasted movie address appears under Video as well.
+
+Copying a `.png` or `.jpg` in Explorer keeps the file where it is — Kept does not duplicate it — but
+it generates the card's small preview from it, so the copy shows a thumbnail in **Files** and is
+listed under **Images (All)** as well, beside the screenshots. Files captured before that existed get
+their preview on the next start, in the same background pass as text recognition. Only files that
+decode with the bundled PNG/JPEG codecs get a picture; anything else keeps the file-list glyph.
 
 Images are also read with the Windows OCR engine in the background; the recognised text is
 indexed for search, shown under the preview, and copyable from a button on the card, where the
@@ -677,12 +694,18 @@ leads with **New archive…** and does the same for an archive, the actions the 
 the same menu into the bulk version, and **Markdown** only appears there when at least one of them is
 a text clip, since only text has anything to write.
 
-A video clip adds **Copy Video File** and **Copy Video URL** under **Copy**. *Copy* publishes the MP4
-and the address together, which is what a chat window wants; the two extra entries are for when only
-one is wanted — the file for an editor that refuses a file drop, the address for pasting the page the
-movie came from. The address is the one recorded when the video was fetched, or the clip's own
-payload when the whole copy was a movie address, and **Copy Video URL** is greyed out for a video
-whose page never named one.
+A video clip leads with **Copy**, which publishes the MP4 — the shape a chat window wants — and adds
+a **Copy…** submenu for wanting one part of it: **Copy Thumbnail** (the still frame the card shows,
+as an image on the clipboard), **Copy Video File**, **Copy Video URL** and **Copy Video Path** (the
+file's location as text). The address is the one recorded when the video was fetched, or the clip's
+own payload when the whole copy was a movie address, and **Copy Video URL** is greyed out for a video
+whose page never named one. **Show Save Location** opens the folder with the clip's own file
+selected — the video rather than the still beside it, or a file list's first path — and is offered
+for file clips too.
+
+**Split into stack items…** only appears for text with more than one list item to queue, so the menu
+never offers a split that would produce one entry, and **Load link preview** only appears for a text
+clip whose payload is a URL.
 
 ### Quick preview
 
@@ -947,11 +970,16 @@ install — so a repeated screenshot is a single click and the rarer kinds are o
 closes on an outside click, on Esc (which returns focus to the button) and on a window resize, and
 the arrow keys walk it.
 
+The menu also carries **Capture the previous area**, which repeats the rectangle the last region,
+window or full-screen capture covered — useful for taking the same spot twice in a row. It borrows
+an area instead of choosing one, so it never becomes the button's remembered kind. The area lives
+for the session: a fresh start has nothing to repeat until the first screenshot.
+
 The sidebar's capture strip uses the same split button and remembered kind while the sidebar is
-expanded. In the collapsed rail the four capture kinds sit as separate icons, followed by the capture
-delay's clock — the rail has no menu to hang the setting off — and then the record button, with no
-divider between them, so the capture tools read as one group. The eyedropper and ruler sit together
-above them in both layouts.
+expanded. In the collapsed rail the four capture kinds sit as separate icons, followed by the
+previous-area icon and the capture delay's clock — the rail has no menu to hang them off — and then
+the record button, with no divider between them, so the capture tools read as one group. The
+eyedropper and ruler sit together above them in both layouts.
 
 The capture group takes screenshots without borrowing another tool:
 
@@ -1046,12 +1074,12 @@ tick, so a countdown that is easy to miss with your eye on the window is still h
 ring cancels the countdown *and* the shot, and so does `Esc`, from anywhere: while a countdown runs
 the app holds a temporary system-wide `Esc` and releases it the moment the countdown ends, which is
 the same trick the ruler's lock uses. The number is a setting, so it survives a restart, and it
-applies to the four screenshot kinds and to their shortcuts; the colour picker and the ruler are not
+applies to the four screenshot kinds and to their shortcuts; the color picker and the ruler are not
 screenshots and never wait.
 
 **Shortcuts per capture type.** *Settings → Activation → Capture shortcuts* gives region, window, full
-screen, scrolling, the colour picker and the onscreen ruler a combination each, recorded by clicking
-the field and pressing the keys. Empty means none. A combination Windows refuses because another
+screen, scrolling, the previous area, the color picker and the onscreen ruler a combination each,
+recorded by clicking the field and pressing the keys. Empty means none. A combination Windows refuses because another
 application owns it is reported and the previous one stays active. The same section carries **New
 clip shortcut**, which opens the small New clip window from anywhere; it is empty by default and the
 first-run wizard offers it too. **Paste stack shortcut** sits beside it, `Alt+Shift+V` by default,
@@ -1072,11 +1100,11 @@ is also grouped under **Images → Screenshots** in the sidebar.
 ## Onscreen ruler
 
 The ruler opens from the icon immediately right of the eyedropper in the title bar and the sidebar,
-from *Capture → Onscreen ruler* in the tray menu, or from its opt-in shortcut in
-*Settings → Activation → Capture shortcuts*. It hides Kept, covers **the primary monitor** and
-stays up until it is closed. The other monitors are left alone on purpose: one window stretched
-across two screens of different shapes and scales measures neither of them, which is what used to
-put guides and snapping in the wrong place. Everything it measures is in screen pixels of that
+from *Onscreen ruler* in the tray menu (a top-level item, beside *Color Picker*), or from its opt-in
+shortcut in *Settings → Activation → Capture shortcuts*. It hides Kept, covers **the primary
+monitor** and stays up until it is closed. The other monitors are left alone on purpose: one window
+stretched across two screens of different shapes and scales measures neither of them, which is what
+used to put guides and snapping in the wrong place. Everything it measures is in screen pixels of that
 monitor.
 
 - The toolbar is icon-only; hover any button for its name and shortcut. Select (`V`), distance (`D`),
@@ -1148,13 +1176,17 @@ the storage folder all apply to it unchanged.
 (720 px)**, **High (1080 px)** and **Original resolution** — the first three pair a width with a frame
 rate (10, 15 and 24 frames a second), and the last leaves the video at the size it was recorded.
 FFmpeg builds a palette from the clip and applies it in the same pass, so a screen recording
-keeps its flat colours instead of banding. The conversion runs behind a progress bar in the status
-bar, and the finished GIF arrives as a new clip in the history, filed under the *GIFs* view with the
-first frame as its poster — so copying it is the same menu entry every image has, and the clip you
-converted from is left untouched. *Save to a file…* in the same submenu writes the GIF wherever the
-save dialog points instead, using the frame rate and width from *Settings → Screen Recording → GIF
-export* (twelve frames a second and 720 pixels by default; a width of zero keeps the video's own
-size).
+keeps its flat colours instead of banding. The conversion runs on a background thread, so the window
+keeps responding while a long clip encodes, and the status bar shows its progress with a **Cancel**
+button that kills FFmpeg rather than waiting for it. The finished GIF arrives as a new clip in the
+history, filed under the *GIFs* view with the first frame as its poster — so copying it is the same
+menu entry every image has, and the clip you converted from is left untouched. *Save to a file…* in
+the same submenu writes the GIF wherever the save dialog points instead, using the frame rate and
+width from *Settings → Screen Recording → GIF export* (twelve frames a second and 720 pixels by
+default; a width of zero keeps the video's own size).
+
+The progress bar is keyed by clip id, so two conversions started in a row cannot move each other's
+percentage, and cancelling one leaves the other alone.
 
 **FFmpeg** is the encoder, and it is the only external program the app uses. It is looked for where
 the setting points, then on `PATH`, then in the folder a winget install leaves it in — which is not on

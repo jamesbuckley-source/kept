@@ -4,6 +4,7 @@ import type { SearchChip } from "../lib/search";
 import type { SortOrder, ViewMode } from "../lib/types";
 import {
   IconArchive,
+  IconCalendar,
   IconClose,
   IconGrid,
   IconList,
@@ -114,6 +115,23 @@ export function SearchBar({
   // the toolbar watches its own width rather than the window's.
   const rowRef = useRef<HTMLDivElement | null>(null);
   const [compact, setCompact] = useState(false);
+  /** Whether the capture-date picker is showing under the field. */
+  const [dateOpen, setDateOpen] = useState(false);
+  /** The day the query already narrows to, read back out of its `day:` token. */
+  const activeDay = /\bday:(\d{4}-\d{2}-\d{2})\b/.exec(value)?.[1] ?? "";
+
+  /**
+   * Replaces the query's `day:` token, keeping everything else as typed. An empty
+   * day removes the token, which is how Clear and the chip both undo it.
+   */
+  const chooseDay = (day: string) => {
+    const rest = value
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => !/^day:/i.test(token));
+    if (day) rest.push(`day:${day}`);
+    onChange(rest.join(" "));
+  };
 
   useEffect(() => {
     const node = rowRef.current;
@@ -145,19 +163,75 @@ export function SearchBar({
       <div ref={rowRef} className="flex items-center gap-2 px-3 py-2">
         <IconSearch className="size-3.5 shrink-0 text-ink-faint" />
 
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          // The window is summoned to be typed into, so it should never open with
-          // the caret somewhere else.
-          autoFocus
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Search clips…  (try kind:image, tag:invoice, before:2024-05-01)"
-          aria-label="Search clips"
-          className="min-w-0 flex-1 rounded border border-edge-soft bg-panel-2/40 px-2 py-0.5 text-[13px] text-ink placeholder:text-ink-faint/60 focus:border-accent-dim focus:outline-none"
-        />
+        <div className="relative min-w-0 flex-1">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            // The window is summoned to be typed into, so it should never open with
+            // the caret somewhere else.
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Search clips…  (try kind:image, tag:invoice, before:2024-05-01)"
+            aria-label="Search clips"
+            className="w-full rounded border border-edge-soft bg-panel-2/40 py-0.5 pl-2 pr-7 text-[13px] text-ink placeholder:text-ink-faint/60 focus:border-accent-dim focus:outline-none"
+          />
+
+          {/* Inside the field, on the right: the date narrows the same query the
+              text does, so it belongs with the text rather than in the toolbar. */}
+          <button
+            type="button"
+            onClick={() => setDateOpen((open) => !open)}
+            title={
+              activeDay
+                ? `Showing clips captured on ${activeDay} — click to change`
+                : "Filter by capture date"
+            }
+            aria-label="Filter by capture date"
+            aria-pressed={dateOpen || Boolean(activeDay)}
+            className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded p-0.5 transition-colors ${
+              activeDay ? "text-accent-hi" : "text-ink-faint hover:text-ink-dim"
+            }`}
+          >
+            <IconCalendar className="size-3.5" />
+          </button>
+
+          {dateOpen && (
+            <div
+              className="absolute right-0 top-full z-50 mt-1 flex items-center gap-1.5 rounded border border-edge bg-panel p-2 shadow-xl animate-fade-in"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                setDateOpen(false);
+              }}
+            >
+              <input
+                type="date"
+                autoFocus
+                value={activeDay}
+                onChange={(event) => {
+                  chooseDay(event.target.value);
+                  setDateOpen(false);
+                }}
+                aria-label="Capture date"
+                className="rounded border border-edge bg-panel-2 px-1.5 py-0.5 text-[11px] text-ink focus:border-accent-dim focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  chooseDay("");
+                  setDateOpen(false);
+                }}
+                disabled={!activeDay}
+                className="rounded px-1.5 py-0.5 text-[10px] text-ink-faint transition-colors hover:text-ink disabled:opacity-40"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
 
         {activeFilter !== "All clips" && (
           <button

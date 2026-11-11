@@ -20,7 +20,9 @@ interface StatusBarProps {
   onResume: () => void;
   now: number;
   /** A GIF being made from a video, or null when nothing is converting. */
-  gifJob: { percent: number } | null;
+  gifJob: { id: number; percent: number } | null;
+  /** Stops the conversion the bar is showing. */
+  onCancelGif: () => void;
 }
 
 export function StatusBar({
@@ -37,6 +39,7 @@ export function StatusBar({
   onResume,
   now,
   gifJob,
+  onCancelGif,
 }: StatusBarProps) {
   const truncated = total > shown;
   const remainingMinutes =
@@ -78,6 +81,14 @@ export function StatusBar({
             />
           </span>
           <span className="w-8 tabular-nums text-ink-faint">{gifJob.percent}%</span>
+          <button
+            type="button"
+            onClick={onCancelGif}
+            title="Stop making the GIF"
+            className="rounded px-1 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-panel-3 hover:text-ink"
+          >
+            Cancel
+          </button>
         </span>
       )}
 

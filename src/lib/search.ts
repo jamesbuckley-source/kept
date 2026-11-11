@@ -65,6 +65,22 @@ function parseDate(raw: string): number | null {
   return Number.isFinite(stamp) ? stamp : null;
 }
 
+/**
+ * The span one local calendar day covers, from midnight to the next midnight.
+ *
+ * A calendar day is not always 24 hours — a daylight-saving change makes it 23 or
+ * 25 — so the end comes from the next date rather than from adding a fixed span.
+ */
+function parseDay(raw: string): { start: number; end: number } | null {
+  const value = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const start = new Date(`${value}T00:00`).getTime();
+  if (!Number.isFinite(start)) return null;
+  const next = new Date(start);
+  next.setDate(next.getDate() + 1);
+  return { start, end: next.getTime() };
+}
+
 function normalizeHex(raw: string): string | null {
   const digits = raw.replace(/^#/, "").trim();
   if (/^[0-9a-f]{3}$/i.test(digits)) {
@@ -175,6 +191,17 @@ export function parseSearch(query: string, collections: Collection[] = []): Pars
         }
         filter.before = stamp;
         chips.push({ key: "before", label: `before ${value}`, token });
+        break;
+      }
+      case "day": {
+        const range = parseDay(value);
+        if (!range) {
+          words.push(token);
+          break;
+        }
+        filter.dayStart = range.start;
+        filter.dayEnd = range.end;
+        chips.push({ key: "day", label: `on ${value}`, token });
         break;
       }
       case "pinned": {

@@ -125,6 +125,10 @@ pub struct ClipSummary {
     pub media_locked: bool,
     pub file_count: i64,
     pub char_count: i64,
+    /// How many paste-stack items splitting this text clip would produce. Zero for
+    /// clips that are not text, are sealed, or have a single line, so the menu can
+    /// leave the action out rather than offering one that fails.
+    pub split_item_count: i64,
     /// True when an image clip has recognised, non-empty text.
     pub has_ocr: bool,
     /// True when the user attached a note to the clip.
@@ -220,6 +224,8 @@ pub struct Stats {
     pub pinned: i64,
     pub images: i64,
     pub files: i64,
+    /// File-list clips that begin with a picture, which the Images view also lists.
+    pub image_files: i64,
     /// Clips that only live in an archive collection, so the history counts above
     /// can stay a picture of the active window.
     pub archived: i64,
@@ -253,6 +259,12 @@ pub struct ClipFilter {
     pub app: Option<String>,
     /// Only clips captured before this Unix-millisecond timestamp.
     pub before: Option<i64>,
+    /// Only clips captured on or after this Unix-millisecond timestamp, which is
+    /// the start of the day the `day:` picker chose.
+    pub day_start: Option<i64>,
+    /// Only clips captured before this Unix-millisecond timestamp: the next
+    /// midnight after `day_start`.
+    pub day_end: Option<i64>,
     /// Exact color match, for the `color:` search operator.
     pub color: Option<String>,
     /// Derived payload shape ("url", "email", "path", "json"), for `type:`.

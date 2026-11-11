@@ -12,6 +12,7 @@ import {
   IconFullScreenCapture,
   IconMaximize,
   IconMinimize,
+  IconPreviousArea,
   IconRecord,
   IconRegionCapture,
   IconRestore,
@@ -35,6 +36,8 @@ interface TitleBarProps {
   onCaptureRegion: () => void;
   onCaptureWindow: () => void;
   onCaptureScreen: () => void;
+  /** Hides the window and repeats the area the last capture covered. */
+  onCapturePrevious: () => void;
   onCaptureScrolling: () => void;
   /** Hides the window and opens the onscreen ruler. */
   onOpenRuler: () => void;
@@ -67,6 +70,7 @@ export function TitleBar({
   onCaptureRegion,
   onCaptureWindow,
   onCaptureScreen,
+  onCapturePrevious,
   onCaptureScrolling,
   onOpenRuler,
   onRecord,
@@ -293,6 +297,21 @@ export function TitleBar({
                     </button>
                   );
                 })}
+                <div className="my-1 h-px bg-edge" aria-hidden="true" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onCapturePrevious();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] leading-snug text-ink-dim transition-colors hover:bg-panel-2 hover:text-ink focus:outline-none focus-visible:bg-panel-2 focus-visible:text-ink"
+                >
+                  <span className="flex size-3.5 shrink-0 items-center justify-center text-ink-faint">
+                    <IconPreviousArea className="size-3.5" />
+                  </span>
+                  <span className="min-w-0 flex-1">Capture the previous area</span>
+                </button>
                 <div className="my-1 h-px bg-edge" aria-hidden="true" />
                 <CaptureDelayMenuItem
                   onOpen={() => {

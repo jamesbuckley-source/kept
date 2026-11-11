@@ -27,6 +27,8 @@ const ID_CAPTURE_REGION: &str = "capture-region";
 const ID_CAPTURE_WINDOW: &str = "capture-window";
 const ID_CAPTURE_SCREEN: &str = "capture-screen";
 const ID_CAPTURE_SCROLLING: &str = "capture-scrolling";
+/// Repeats the area the last region, window or full-screen capture covered.
+const ID_CAPTURE_PREVIOUS: &str = "capture-previous";
 const ID_CAPTURE_COLOR: &str = "capture-color";
 /// Opens the onscreen ruler; it hides the window and owns the screen until closed.
 const ID_CAPTURE_RULER: &str = "capture-ruler";
@@ -99,27 +101,19 @@ pub fn refresh(app: &AppHandle) {
 
 fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let new_clip = MenuItem::with_id(app, ID_NEW_CLIP, "New clip…", true, None::<&str>)?;
+    let color = MenuItem::with_id(app, ID_CAPTURE_COLOR, "Color Picker", true, None::<&str>)?;
+    let ruler = MenuItem::with_id(app, ID_CAPTURE_RULER, "Onscreen ruler", true, None::<&str>)?;
 
     let region = MenuItem::with_id(app, ID_CAPTURE_REGION, "Region", true, None::<&str>)?;
     let capture_window = MenuItem::with_id(app, ID_CAPTURE_WINDOW, "Window", true, None::<&str>)?;
     let screen = MenuItem::with_id(app, ID_CAPTURE_SCREEN, "Full screen", true, None::<&str>)?;
     let scrolling = MenuItem::with_id(app, ID_CAPTURE_SCROLLING, "Scrolling", true, None::<&str>)?;
-    let color = MenuItem::with_id(app, ID_CAPTURE_COLOR, "Colour picker", true, None::<&str>)?;
-    let capture_separator = PredefinedMenuItem::separator(app)?;
-    let ruler = MenuItem::with_id(app, ID_CAPTURE_RULER, "Onscreen ruler", true, None::<&str>)?;
+    let previous = MenuItem::with_id(app, ID_CAPTURE_PREVIOUS, "Previous area", true, None::<&str>)?;
     let capture = Submenu::with_items(
         app,
         "Capture",
         true,
-        &[
-            &region,
-            &capture_window,
-            &screen,
-            &scrolling,
-            &color,
-            &capture_separator,
-            &ruler,
-        ],
+        &[&region, &capture_window, &screen, &scrolling, &previous],
     )?;
 
     let pause_state = crate::commands::pause_state(app);
@@ -165,7 +159,7 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let separator_bottom = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, ID_QUIT, "Quit", true, None::<&str>)?;
 
-    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&new_clip, &capture];
+    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&new_clip, &color, &ruler, &capture];
     if let Some(pause) = &pause {
         items.push(pause);
     }
@@ -194,6 +188,9 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             crate::commands::run_capture_shortcut(app, CaptureAction::Scrolling)
         }
         ID_CAPTURE_COLOR => crate::commands::run_capture_shortcut(app, CaptureAction::Color),
+        ID_CAPTURE_PREVIOUS => {
+            crate::commands::run_capture_shortcut(app, CaptureAction::PreviousArea)
+        }
         ID_CAPTURE_RULER => crate::commands::run_capture_shortcut(app, CaptureAction::Ruler),
         ID_PAUSE_15 => {
             crate::commands::pause_capture(app.clone(), Some(15), None);

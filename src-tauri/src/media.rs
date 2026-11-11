@@ -192,6 +192,54 @@ pub fn write_image_files(
     })
 }
 
+/// Writes just the thumbnail for an image that already lives on disk.
+///
+/// A copied image file is not duplicated into the media folder: the file the user
+/// already has stays the clip's payload, and Kept keeps only the small preview its
+/// card draws. Files that are not a readable image, or are too large to decode
+/// cheaply, simply get no preview.
+pub fn write_file_thumbnail(dir: &Path, path: &Path) -> Result<Option<String>> {
+    if !looks_like_image(path) {
+        return Ok(None);
+    }
+    // Cheap guard before decoding: a 200 MB image would stall the capture thread
+    // for longer than the preview is worth.
+    const MAX_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+    if std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0) > MAX_SOURCE_BYTES {
+        log::debug!("not previewing {}: the file is too large", path.display());
+        return Ok(None);
+    }
+    let image = match image::open(path) {
+        Ok(image) => image,
+        Err(e) => {
+            // A build may lack the codec for this format; the clip is still fine.
+            log::debug!("no preview for {}: {e}", path.display());
+            return Ok(None);
+        }
+    };
+    let thumb = image.thumbnail(
+        THUMB_MAX_EDGE.min(image.width()),
+        THUMB_MAX_EDGE.min(image.height()),
+    );
+    let bytes = encode_rgba_png(&thumb.to_rgba8())?;
+    let name = format!("{}.thumb.png", uuid::Uuid::new_v4().simple());
+    std::fs::create_dir_all(dir)?;
+    std::fs::write(dir.join(&name), bytes)?;
+    Ok(Some(name))
+}
+
+/// Whether a path names a picture this build can decode.
+fn looks_like_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "jfif"
+            )
+        })
+}
+
 /// Identifies a file at one moment, so a save by another program can be noticed.
 ///
 /// Editors do not tell us when they wrote anything, and an editor that was opened

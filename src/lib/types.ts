@@ -28,6 +28,8 @@ export interface ClipSummary {
   mediaLocked: boolean;
   fileCount: number;
   charCount: number;
+  /** Paste-stack items splitting this text clip would produce; 0 when it can't split. */
+  splitItemCount: number;
   /** True when an image clip has recognised, non-empty text. */
   hasOcr: boolean;
   /** True when the user attached a note to the clip. */
@@ -95,6 +97,10 @@ export interface ClipFilter {
   app?: string | null;
   /** Only clips captured before this Unix-millisecond timestamp. */
   before?: number | null;
+  /** Only clips captured on or after this Unix-millisecond timestamp. */
+  dayStart?: number | null;
+  /** Only clips captured before this Unix-millisecond timestamp. */
+  dayEnd?: number | null;
   /** Exact `#rrggbb` match. */
   color?: string | null;
   /** Derived payload shape: "url", "email", "path" or "json". */
@@ -183,6 +189,8 @@ export interface Stats {
   pinned: number;
   images: number;
   files: number;
+  /** File-list clips that begin with a picture, which Images (All) also lists. */
+  imageFiles: number;
   /** Clips that only live in archive collections. */
   archived: number;
   /** Text clips whose payload is a single color code. */
@@ -285,6 +293,8 @@ export interface Settings {
   pickColorHotkey: string;
   /** Shortcut that opens the onscreen ruler; empty means none. */
   rulerHotkey: string;
+  /** Shortcut that repeats the last capture area; empty means none. */
+  capturePreviousHotkey: string;
   /** How the ruler prints measurements: "physical", "dip" or "both". */
   rulerUnits: "physical" | "dip" | "both";
   /** What the ruler's Copy button writes. */

@@ -110,6 +110,11 @@ export function captureScreenWindow(): Promise<void> {
   return invoke("capture_screen_window");
 }
 
+/** Hides the window and repeats the area the last capture covered. */
+export function capturePreviousArea(): Promise<void> {
+  return invoke("capture_previous_area");
+}
+
 /** Hides the window and captures every monitor at once. */
 export function captureWholeScreen(): Promise<void> {
   return invoke("capture_whole_screen");
@@ -319,6 +324,26 @@ export function copyVideoFile(id: number, hideWindow = true): Promise<void> {
 /** Puts the address the clip's video came from on the clipboard. */
 export function copyVideoUrl(id: number, hideWindow = true): Promise<void> {
   return invoke("copy_video_url", { id, hideWindow });
+}
+
+/** Puts the path the clip's video file is stored at on the clipboard. */
+export function copyVideoPath(id: number, hideWindow = true): Promise<void> {
+  return invoke("copy_video_path", { id, hideWindow });
+}
+
+/** Copies the still frame a video clip shows, rather than the video file. */
+export function copyClipThumbnail(id: number, hideWindow = true): Promise<void> {
+  return invoke("copy_clip_thumbnail", { id, hideWindow });
+}
+
+/** Stops the GIF conversion in flight, if there is one. */
+export function cancelGifExport(): Promise<void> {
+  return invoke("cancel_gif_export");
+}
+
+/** Opens the folder holding the clip's file and selects it. */
+export function revealSaveLocation(id: number): Promise<void> {
+  return invoke("reveal_save_location", { id });
 }
 
 /** Playing time of a clip's video in milliseconds, or null when it has none. */

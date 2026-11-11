@@ -50,8 +50,10 @@ import {
   captureScreenRegion,
   captureScreenWindow,
   captureScrollingWindow,
+  capturePreviousArea,
   captureWholeScreen,
   captureState,
+  cancelGifExport,
   clearHistory,
   copyClip,
   copyColor,
@@ -59,6 +61,8 @@ import {
   copyText,
   copyVideoFile,
   copyVideoUrl,
+  copyVideoPath,
+  copyClipThumbnail,
   createCollection,
   deleteClip,
   deleteClips,
@@ -92,7 +96,7 @@ import {
   reportError,
   resumeCapture,
   revealArchive,
-  revealClip,
+  revealSaveLocation,
   revealDataDir,
   revealPath,
   saveClip,
@@ -180,10 +184,16 @@ type Prompt =
   | { kind: "tag-color"; tag: Tag }
   | { kind: "bulk-tag" }
   | { kind: "bulk-collect" }
+  | { kind: "bulk-archive" }
   | { kind: "new-collection" }
   | { kind: "new-archive" }
   | { kind: "save-search" }
   | { kind: "rename-search"; search: SavedSearch };
+
+/** True when the user, not FFmpeg, ended a GIF conversion. */
+function isGifCancelled(error: unknown): boolean {
+  return errorMessage(error).toLowerCase().includes("cancelled");
+}
 
 /** Reports a Markdown export, folder included, in the notice strip. */
 function markdownNotice(exported: MarkdownExport, dir: string): string {
@@ -232,7 +242,9 @@ function MainApp() {
   /** Bumped after every mutation so derived data is re-fetched. */
   const [dataVersion, setDataVersion] = useState(0);
   /** A GIF conversion in flight, as the percentage the backend has reached. */
-  const [gifJob, setGifJob] = useState<{ percent: number } | null>(null);  /** Clips picked with Ctrl/Shift click, for the bulk bar. */
+  const [gifJob, setGifJob] = useState<{ id: number; percent: number } | null>(null);
+  /** The clip the progress bar belongs to, so another conversion cannot move it. */
+  const gifJobId = useRef<number | null>(null);  /** Clips picked with Ctrl/Shift click, for the bulk bar. */
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   /** Include clips filed in archive collections in the current search. */
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -338,7 +350,8 @@ function MainApp() {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     listen<{ id: number; percent: number }>("gif:progress", (event) => {
-      if (!cancelled) setGifJob({ percent: Math.max(0, Math.min(100, event.payload.percent)) });
+      if (cancelled || event.payload.id !== gifJobId.current) return;
+      setGifJob({ id: event.payload.id, percent: Math.max(0, Math.min(100, event.payload.percent)) });
     })
       .then((stop) => {
         if (cancelled) stop();
@@ -744,6 +757,35 @@ function MainApp() {
     }
   }, []);
 
+  /** Copies where the video file is stored, for a terminal or a script. */
+  const copyVideoPathSilently = useCallback(async (clip: ClipSummary) => {
+    try {
+      await copyVideoPath(clip.id, false);
+      setNotice("Copied the video's path.");
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, []);
+
+  /** Copies the still frame the card shows, rather than the video beside it. */
+  const copyThumbnailSilently = useCallback(async (clip: ClipSummary) => {
+    try {
+      await copyClipThumbnail(clip.id, false);
+      setNotice("Copied the thumbnail.");
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, []);
+
+  /** Opens the folder holding the clip's own file, with that file selected. */
+  const showSaveLocation = useCallback(async (clip: ClipSummary) => {
+    try {
+      await revealSaveLocation(clip.id);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, []);
+
   /**
    * Converts a video clip into a GIF, in the quality picked from the submenu.
    *
@@ -753,7 +795,8 @@ function MainApp() {
    */
   const exportGifClip = useCallback(
     async (clip: ClipSummary, quality: GifQuality) => {
-      setGifJob({ percent: 0 });
+      gifJobId.current = clip.id;
+      setGifJob({ id: clip.id, percent: 0 });
       try {
         await exportGifClipIpc(clip.id, quality);
         const made =
@@ -761,8 +804,10 @@ function MainApp() {
         setNotice(`Added the ${made} GIF to your history.`);
         bump();
       } catch (e) {
-        setError(errorMessage(e));
+        if (isGifCancelled(e)) setNotice("Stopped the GIF conversion.");
+        else setError(errorMessage(e));
       } finally {
+        gifJobId.current = null;
         setGifJob(null);
       }
     },
@@ -788,11 +833,24 @@ function MainApp() {
         filters: [{ name: "GIF", extensions: ["gif"] }],
       });
       if (typeof path !== "string") return;
-      const written = await exportGif(clip.id, path);
-      setNotice(`Exported ${written.split(/[\\/]/).pop()}.`);
+      gifJobId.current = clip.id;
+      setGifJob({ id: clip.id, percent: 0 });
+      try {
+        const written = await exportGif(clip.id, path);
+        setNotice(`Exported ${written.split(/[\\/]/).pop()}.`);
+      } finally {
+        gifJobId.current = null;
+        setGifJob(null);
+      }
     } catch (e) {
-      setError(errorMessage(e));
+      if (isGifCancelled(e)) setNotice("Stopped the GIF conversion.");
+      else setError(errorMessage(e));
     }
+  }, []);
+
+  /** Stops the conversion the progress bar is showing. */
+  const cancelGif = useCallback(() => {
+    cancelGifExport().catch((e) => setError(errorMessage(e)));
   }, []);
 
   /** Hands an image clip to the editor chosen in Settings. */
@@ -926,6 +984,52 @@ function MainApp() {
       );
     },
     [applySecret, vaultStatus, withVault],
+  );
+
+  /**
+   * Marks clips dropped on Text ▸ Secrets as secret. Only text can be sealed, so
+   * an image or file clip in the drop is reported rather than silently skipped.
+   */
+  const markDroppedSecret = useCallback(
+    async (ids: number[]) => {
+      const found = ids
+        .map((id) => items.find((item) => item.id === id))
+        .filter((clip): clip is ClipSummary => clip !== undefined);
+      const texts = found.filter((clip) => clip.kind === "text" && !clip.secretLevel);
+      if (texts.length === 0) {
+        setNotice(
+          found.length === 0
+            ? "Those clips are no longer in history."
+            : "Only text clips can be marked secret.",
+        );
+        return;
+      }
+      const skipped = found.length - texts.length;
+      const mark = async () => {
+        try {
+          for (const clip of texts) await setClipSecret(clip.id, true);
+          bump();
+          const sealed = `${texts.length} clip${texts.length === 1 ? "" : "s"}`;
+          const aside =
+            skipped === 0
+              ? ""
+              : ` ${skipped} ${skipped === 1 ? "was not text and was" : "were not text and were"} left alone.`;
+          setNotice(`Marked ${sealed} secret.${aside}`);
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      };
+      // Sealing encrypts the clip, which needs the vault open.
+      if (vaultStatus === "unlocked") {
+        void mark();
+        return;
+      }
+      withVault(
+        () => void mark(),
+        "Marking a clip as secret encrypts it, so the vault has to be open first.",
+      );
+    },
+    [bump, items, vaultStatus, withVault],
   );
 
   /** The four things the passphrase window can be asked to do. */
@@ -1348,6 +1452,11 @@ function MainApp() {
   /** Hides the window and captures every monitor at once. */
   const captureScreen = useCallback(() => {
     captureWholeScreen().catch((e) => setError(errorMessage(e)));
+  }, []);
+
+  /** Hides the window and repeats the area the last capture covered. */
+  const capturePrevious = useCallback(() => {
+    capturePreviousArea().catch((e) => setError(errorMessage(e)));
   }, []);
 
   /** Picks a window, scrolls it to the end and captures the whole length. */
@@ -1988,6 +2097,48 @@ function MainApp() {
     [bulkCollect, collections],
   );
 
+  /**
+   * Files the selection into an archive chosen by name, creating it when the name
+   * is new. An archive hides its clips, so the selection is handed to a survivor
+   * unless the archive being browsed is the one that was chosen.
+   */
+  const bulkArchiveByName = useCallback(
+    async (value: string) => {
+      const typed = value.trim();
+      if (!typed) return;
+      const count = picked.length;
+      try {
+        const match = collections.find(
+          (collection) =>
+            collection.archived && collection.name.toLowerCase() === typed.toLowerCase(),
+        );
+        let archiveId = match?.id;
+        let archiveName = match?.name;
+        if (archiveId === undefined) {
+          const created = await createCollection(typed);
+          await setCollectionArchived(created.id, true);
+          archiveId = created.id;
+          archiveName = created.name;
+        }
+        await addToCollection(picked, archiveId);
+        clearSelection();
+        const viewingTarget = view.kind === "collection" && view.id === archiveId;
+        if (!includeArchived && !viewingTarget) {
+          selectSurvivor(new Set(picked));
+        }
+        bump();
+        setNotice(
+          count === 1
+            ? `Archived 1 clip in “${archiveName}”.`
+            : `Archived ${count} clips in “${archiveName}”.`,
+        );
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    },
+    [bump, clearSelection, collections, includeArchived, picked, selectSurvivor, view],
+  );
+
   /** Exports the selection into a folder the user picks. */
   const bulkExport = useCallback(async () => {
     try {
@@ -2052,6 +2203,11 @@ function MainApp() {
           onSelect: () => setPrompt({ kind: "bulk-tag" }),
         });
         items.push({
+          label: `Archive ${count} clips…`,
+          icon: <IconArchive className="size-3" />,
+          onSelect: () => setPrompt({ kind: "bulk-archive" }),
+        });
+        items.push({
           label: `Collect ${count} clips…`,
           icon: <IconFolder className="size-3" />,
           onSelect: () => setPrompt({ kind: "bulk-collect" }),
@@ -2079,26 +2235,46 @@ function MainApp() {
           onSelect: () => void bulkDelete(),
         });
       } else {
-        // Copy is the most common action, so it leads the single-clip menu.
+        // Copy is the most common action, so it leads the single-clip menu. A video
+        // copies the file this app keeps, which is what pasting into a chat wants;
+        // the submenu is for asking for one part of it.
         items.push({
           label: "Copy",
           icon: <IconCopy className="size-3" />,
           onSelect: () => void copySilently(clip),
         });
-        // A video is two separate things — the file this app keeps and the address
-        // it came from. Copy publishes both at once; these are for wanting one.
+        // A video is several separate things — the file, the still the card shows,
+        // the address it came from and where it lives. Copy publishes the file;
+        // these are for wanting exactly one of the others.
         if (clip.video) {
           items.push({
-            label: "Copy Video File",
-            icon: <IconVideo className="size-3" />,
-            onSelect: () => void copyVideoFileSilently(clip),
-          });
-          items.push({
-            label: "Copy Video URL",
-            icon: <IconExternal className="size-3" />,
-            onSelect: () => void copyVideoUrlSilently(clip),
-            // The page a video was copied from does not always name its address.
-            disabled: !clip.videoUrl,
+            label: "Copy…",
+            icon: <IconCopy className="size-3" />,
+            onSelect: () => undefined,
+            submenu: [
+              {
+                label: "Copy Thumbnail",
+                icon: <IconImage className="size-3" />,
+                onSelect: () => void copyThumbnailSilently(clip),
+              },
+              {
+                label: "Copy Video File",
+                icon: <IconVideo className="size-3" />,
+                onSelect: () => void copyVideoFileSilently(clip),
+              },
+              {
+                label: "Copy Video URL",
+                icon: <IconExternal className="size-3" />,
+                onSelect: () => void copyVideoUrlSilently(clip),
+                // The page a video was copied from does not always name its address.
+                disabled: !clip.videoUrl,
+              },
+              {
+                label: "Copy Video Path",
+                icon: <IconFolder className="size-3" />,
+                onSelect: () => void copyVideoPathSilently(clip),
+              },
+            ],
           });
           items.push({
             label: "Export as GIF",
@@ -2236,13 +2412,15 @@ function MainApp() {
         });
       }
       if (clip.kind !== "text") {
+        // A video reveals the video, not the still frame stored beside it: the
+        // frame is an implementation detail the user never named. A file list
+        // reveals its first path, or the folder when that path is gone.
+        const saveLocation = clip.video || clip.kind === "files";
         items.push(
           group({
-            label: clip.kind === "image" ? "Show image in Explorer" : "Show in Explorer",
-            icon: clip.kind === "image" ? <IconImage className="size-3" /> : <IconFolder className="size-3" />,
-            onSelect: () => {
-              revealClip(clip.id).catch((e) => setError(errorMessage(e)));
-            },
+            label: saveLocation ? "Show Save Location" : "Show image in Explorer",
+            icon: saveLocation ? <IconFolder className="size-3" /> : <IconImage className="size-3" />,
+            onSelect: () => void showSaveLocation(clip),
           }),
         );
       }
@@ -2261,18 +2439,22 @@ function MainApp() {
         });
       }
       if (clip.kind === "text") {
-        items.push(
-          group({
-            label: "Export as Markdown note…",
-            icon: <IconSave className="size-3" />,
-            onSelect: () => void exportNotes([clip.id]),
-          }),
-          {
+        const note = group({
+          label: "Export as Markdown note…",
+          icon: <IconSave className="size-3" />,
+          onSelect: () => void exportNotes([clip.id]),
+        });
+        // Splitting is only offered when there is more than one item to queue; a
+        // single line would just be a slower way of adding the clip.
+        if (clip.splitItemCount > 1) {
+          items.push(note, {
             label: "Split into stack items…",
             icon: <IconStack className="size-3" />,
             onSelect: () => void splitIntoStack(clip),
-          },
-        );
+          });
+        } else {
+          items.push(note);
+        }
       }
       // The two things the preview and the properties pane are for are worth
       // reaching without leaving the list, so they lead the per-clip group.
@@ -2293,8 +2475,9 @@ function MainApp() {
       );
 
       // A copied link's page can offer its own picture; asking is a click, and
-      // only offered while there is nothing to show yet.
-      if (!single && clip.contentKind === "url" && !clip.thumbFile) {
+      // only offered while there is nothing to show yet. Only text carries a
+      // payload shape, so a movie clip never gets this.
+      if (!single && clip.kind === "text" && clip.contentKind === "url" && !clip.thumbFile) {
         items.push({
           label: "Load link preview",
           icon: <IconImage className="size-3" />,
@@ -2348,6 +2531,9 @@ function MainApp() {
       copyTextFromImage,
       copyVideoFileSilently,
       copyVideoUrlSilently,
+      copyVideoPathSilently,
+      copyThumbnailSilently,
+      showSaveLocation,
       exportGifClip,
       exportGifSilently,
       dropClipsOnCollection,
@@ -2788,6 +2974,7 @@ function MainApp() {
           onCaptureRegion={captureRegion}
           onCaptureWindow={captureWindow}
           onCaptureScreen={captureScreen}
+          onCapturePrevious={capturePrevious}
           onCaptureScrolling={captureScrolling}
           onOpenRuler={startRuler}
           onRecord={openRecordToolbar}
@@ -2977,6 +3164,13 @@ function MainApp() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setPrompt({ kind: "bulk-archive" })}
+                    className="shrink-0 whitespace-nowrap rounded border border-edge bg-panel-2 px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
+                  >
+                    Archive…
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setPrompt({ kind: "bulk-collect" })}
                     className="shrink-0 whitespace-nowrap rounded border border-edge bg-panel-2 px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
                   >
@@ -3049,6 +3243,7 @@ function MainApp() {
               onContextMenuSearch={openSearchMenu}
               listLimit={settings?.sidebarListLimit ?? 6}
               onDropClips={(ids, collection) => void dropClipsOnCollection(ids, collection)}
+              onDropClipsOnSecrets={(ids) => void markDroppedSecret(ids)}
               textExpanded={settings?.textExpanded ?? false}
               onToggleText={() => void applyPatch({ textExpanded: !(settings?.textExpanded ?? false) })}
               imagesExpanded={settings?.imagesExpanded ?? false}
@@ -3063,6 +3258,7 @@ function MainApp() {
               onCaptureRegion={captureRegion}
               onCaptureWindow={captureWindow}
               onCaptureScreen={captureScreen}
+              onCapturePrevious={capturePrevious}
               onCaptureScrolling={captureScrolling}
               onOpenRuler={startRuler}
               onRecord={openRecordToolbar}
@@ -3272,6 +3468,7 @@ function MainApp() {
         onResume={resumeCapturing}
         now={now}
         gifJob={gifJob}
+        onCancelGif={cancelGif}
       />
 
       {prompt && (
@@ -3285,7 +3482,9 @@ function MainApp() {
                   ? `Tag ${picked.length} clips`
                   : prompt.kind === "bulk-collect"
                     ? `File ${picked.length} clips`
-                    : prompt.kind === "save-search"
+                    : prompt.kind === "bulk-archive"
+                      ? `Archive ${picked.length} clips`
+                      : prompt.kind === "save-search"
                       ? "Save this search"
                       : prompt.kind === "new-collection"
                         ? "New collection"
@@ -3304,7 +3503,9 @@ function MainApp() {
                   ? "The tag is added to every selected clip; existing tags are kept."
                   : prompt.kind === "bulk-collect"
                     ? "Pick a collection, or type a new name to create one."
-                    : prompt.kind === "new-collection"
+                    : prompt.kind === "bulk-archive"
+                      ? "Pick an archive, or type a new name to create one. Archived clips stay out of history until you browse the archive."
+                      : prompt.kind === "new-collection"
                       ? "The collection is created and these clips are filed in it."
                       : prompt.kind === "new-archive"
                         ? "The archive is created and these clips are filed in it, out of the way of Clear history."
@@ -3315,9 +3516,11 @@ function MainApp() {
           label={
             prompt.kind === "bulk-collect"
               ? "Collection"
-              : prompt.kind === "tag-color"
-                ? undefined
-                : "Name"
+              : prompt.kind === "bulk-archive"
+                ? "Archive"
+                : prompt.kind === "tag-color"
+                  ? undefined
+                  : "Name"
           }
           placeholder={
             prompt.kind === "new-collection"
@@ -3347,7 +3550,14 @@ function MainApp() {
                       label: collection.name,
                       value: collection.name,
                     }))
-                : undefined
+                : prompt.kind === "bulk-archive"
+                  ? collections
+                      .filter((collection) => collection.archived)
+                      .map((collection) => ({
+                        label: collection.name,
+                        value: collection.name,
+                      }))
+                  : undefined
           }
           onCancel={() => setPrompt(null)}
           onSubmit={(value) => {
@@ -3358,6 +3568,7 @@ function MainApp() {
               void recolorTag(current.tag, value.trim() ? value : null);
             else if (current.kind === "bulk-tag") void bulkTag(value);
             else if (current.kind === "bulk-collect") void bulkCollectByName(value);
+            else if (current.kind === "bulk-archive") void bulkArchiveByName(value);
             else if (current.kind === "new-collection")
               void collectIntoNew(newTargets, value, false);
             else if (current.kind === "new-archive")

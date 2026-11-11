@@ -43,6 +43,13 @@ const HIDE_DELAY: Duration = Duration::from_millis(180);
 /// Fast enough that the highlight tracks the cursor without spinning a core.
 #[cfg(windows)]
 const POLL_INTERVAL: Duration = Duration::from_millis(15);
+
+/// The area the last region, window or full-screen capture covered.
+///
+/// Kept for the session only: "Previous area" repeats what this run captured, and
+/// a fresh start has nothing to repeat until the first screenshot.
+#[cfg(windows)]
+static LAST_AREA: Mutex<Option<Rect>> = Mutex::new(None);
 /// How long UI Automation gets to describe a window's content. It is a
 /// cross-process call into an application that may be busy, and a capture must
 /// not wait on it: half a second, then the fallbacks decide. A browser turns its
@@ -520,6 +527,28 @@ pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>
     result
 }
 
+/// Hides the app and captures the area the last region, window or full-screen
+/// capture covered, without asking for it again.
+///
+/// Before the first capture there is nothing to repeat, which is an error worth
+/// saying out loud rather than a silent no-op.
+#[cfg(windows)]
+pub fn capture_previous(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    let _busy = Busy::acquire()?;
+    let rect = last_area().ok_or_else(|| {
+        AppError::msg("there is no previous capture area yet — take a screenshot first")
+    })?;
+    let hidden = hides_for_capture(app);
+    if hidden {
+        window::hide(app);
+    }
+    let result = previous_flow(app, delay, rect);
+    if hidden {
+        window::show(app);
+    }
+    result
+}
+
 /// Hides the app, highlights the window under the cursor and captures the one
 /// that is clicked.
 #[cfg(windows)]
@@ -592,6 +621,13 @@ fn hides_for_capture(app: &AppHandle) -> bool {
 pub fn capture_region(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
     Err(AppError::msg(
         "capturing a screen region is only supported on Windows",
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn capture_previous(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
+    Err(AppError::msg(
+        "capturing the previous area is only supported on Windows",
     ))
 }
 
@@ -898,21 +934,27 @@ fn region_flow(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     let Some(rect) = selected else {
         return Ok(None);
     };
+    // The overlay works in its own coordinates, which start at a negative offset
+    // when a monitor sits left of the primary one; the remembered area is in screen
+    // coordinates so a later "Previous area" can read it back unchanged.
+    let screen_rect = Rect::new(
+        bounds.left + rect.left,
+        bounds.top + rect.top,
+        bounds.left + rect.right,
+        bounds.top + rect.bottom,
+    );
     let Some((snapshot_width, snapshot_height, snapshot)) = frozen else {
         // The area is chosen, so the desktop is the user's again: the countdown runs
         // over a live screen and the picture is of whatever it looks like at the end.
-        // The overlay's selection is in its own coordinates, which start at a
-        // negative offset when a monitor sits left of the primary one.
-        let screen_rect = Rect::new(
-            bounds.left + rect.left,
-            bounds.top + rect.top,
-            bounds.left + rect.right,
-            bounds.top + rect.bottom,
-        );
-        return delayed_pixels(app, delay, screen_rect);
+        let captured = delayed_pixels(app, delay, screen_rect)?;
+        if captured.is_some() {
+            remember_area(screen_rect);
+        }
+        return Ok(captured);
     };
     let (width, height, rgba) = crop(&snapshot, snapshot_width, snapshot_height, rect)
         .ok_or_else(|| AppError::msg("the selection does not fit the screen"))?;
+    remember_area(screen_rect);
     Ok(Some(ClipContent::Image {
         width,
         height,
@@ -934,6 +976,31 @@ fn delayed_pixels(app: &AppHandle, delay: u32, rect: Rect) -> Result<Option<Clip
     }))
 }
 
+/// Repeats the remembered area after the window has left the screen.
+#[cfg(windows)]
+fn previous_flow(app: &AppHandle, delay: u32, rect: Rect) -> Result<Option<ClipContent>> {
+    std::thread::sleep(HIDE_DELAY);
+    delayed_pixels(app, delay, rect)
+}
+
+/// The area the last capture covered, if this session has taken one.
+#[cfg(windows)]
+pub fn last_area() -> Option<Rect> {
+    *LAST_AREA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
+fn remember_area(rect: Rect) {
+    if rect.is_empty() {
+        return;
+    }
+    *LAST_AREA
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(rect);
+}
+
 #[cfg(windows)]
 fn window_flow(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     let Some(target) = pick_window()? else {
@@ -944,7 +1011,10 @@ fn window_flow(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     if !crate::countdown::run(app, delay) {
         return Ok(None);
     }
-    capture_window_pixels(&target).map(Some)
+    let captured = capture_window_pixels(&target)?;
+    // The part a click takes, which is what the screen would have shown too.
+    remember_area(target.capture.intersect(virtual_bounds()).unwrap_or(target.capture));
+    Ok(Some(captured))
 }
 
 /// The region picker without the pixel read: the recorder only needs the geometry.
@@ -1668,7 +1738,9 @@ fn screen_flow(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     if !crate::countdown::run(app, delay) {
         return Ok(None);
     }
-    let (width, height, rgba) = screen_pixels(virtual_bounds())?;
+    let bounds = virtual_bounds();
+    let (width, height, rgba) = screen_pixels(bounds)?;
+    remember_area(bounds);
     Ok(Some(ClipContent::Image {
         width,
         height,

@@ -684,7 +684,8 @@ const CAPTURE_SHORTCUTS = [
   { key: "captureWindowHotkey", label: "Window" },
   { key: "captureScreenHotkey", label: "Full screen" },
   { key: "captureScrollingHotkey", label: "Scrolling" },
-  { key: "pickColorHotkey", label: "Colour picker" },
+  { key: "capturePreviousHotkey", label: "Previous area" },
+  { key: "pickColorHotkey", label: "Color Picker" },
   { key: "rulerHotkey", label: "Onscreen ruler" },
 ] as const;
 
@@ -1510,7 +1511,7 @@ export function SettingsPanel({
           />
           <Row
             label="Capture outline color"
-            hint="The border, window highlight, size chip and colour-picker crosshair. Chrome only: it is never part of the captured image."
+            hint="The border, window highlight, size chip and color-picker crosshair. Chrome only: it is never part of the captured image."
             control={
               <div className="flex items-center gap-1.5">
                 <span
@@ -1985,7 +1986,7 @@ export function SettingsPanel({
           <Section title="Capture">
             <Row
               label="Capture shortcuts"
-              hint="Region, window, full-screen, scrolling, the colour picker and the onscreen ruler can each have their own combination. Click a field and press the keys; leave it empty for none."
+              hint="Region, window, full-screen, scrolling, the previous area, the color picker and the onscreen ruler can each have their own combination. Click a field and press the keys; leave it empty for none."
               control={<CaptureShortcutColumn settings={settings} onCommit={onPatch} />}
             />
             <Row

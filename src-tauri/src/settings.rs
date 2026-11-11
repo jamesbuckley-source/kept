@@ -192,6 +192,18 @@ impl Theme {
         self.colors = self.colors.sanitized();
         self
     }
+
+    /// The colour a native window should paint before its page draws.
+    ///
+    /// The built-in modes use their own palette's canvas; custom mode uses the
+    /// stored one, which `sanitized` has already checked is a hex colour.
+    pub fn canvas(&self) -> String {
+        match self.mode.as_str() {
+            "light" => ThemeColors::light().canvas,
+            "custom" => self.colors.canvas.clone(),
+            _ => ThemeColors::dark().canvas,
+        }
+    }
 }
 
 /// Where the ruler's toolbar was last dragged to, in physical screen pixels.
@@ -301,6 +313,8 @@ pub struct Settings {
     pub pick_color_hotkey: String,
     /// Shortcut that opens the onscreen ruler; empty means none.
     pub ruler_hotkey: String,
+    /// Shortcut that captures the last area again; empty means none.
+    pub capture_previous_hotkey: String,
     /// Shortcut that starts a screen recording; empty means none. The mode it
     /// starts is the one the record toolbar last used.
     pub record_hotkey: String,
@@ -529,6 +543,7 @@ impl Default for Settings {
             capture_scrolling_hotkey: String::new(),
             pick_color_hotkey: String::new(),
             ruler_hotkey: String::new(),
+            capture_previous_hotkey: String::new(),
             record_hotkey: String::new(),
             record_stop_hotkey: String::new(),
             record_pause_hotkey: String::new(),
@@ -741,6 +756,7 @@ impl Settings {
             &mut self.capture_scrolling_hotkey,
             &mut self.pick_color_hotkey,
             &mut self.ruler_hotkey,
+            &mut self.capture_previous_hotkey,
             &mut self.new_clip_hotkey,
             &mut self.stack_paste_hotkey,
         ] {
@@ -1352,6 +1368,7 @@ mod tests {
         assert_eq!(defaults.capture_scrolling_hotkey, "");
         assert_eq!(defaults.pick_color_hotkey, "");
         assert_eq!(defaults.ruler_hotkey, "");
+        assert_eq!(defaults.capture_previous_hotkey, "");
 
         let updated = store
             .update_settings(&serde_json::json!({

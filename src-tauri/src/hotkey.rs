@@ -20,19 +20,24 @@ pub enum CaptureAction {
     Scrolling,
     Color,
     Ruler,
+    PreviousArea,
 }
 
 impl CaptureAction {
-    pub const ALL: [CaptureAction; 6] = [
+    pub const ALL: [CaptureAction; 7] = [
         CaptureAction::Region,
         CaptureAction::Window,
         CaptureAction::Screen,
         CaptureAction::Scrolling,
         CaptureAction::Color,
         CaptureAction::Ruler,
+        CaptureAction::PreviousArea,
     ];
 
     /// Index into [`Bindings::captures`].
+    ///
+    /// The new area action sits after the recording and stack slots so that the
+    /// existing indices keep their meaning.
     fn slot(self) -> usize {
         match self {
             CaptureAction::Region => 0,
@@ -41,6 +46,7 @@ impl CaptureAction {
             CaptureAction::Scrolling => 3,
             CaptureAction::Color => 4,
             CaptureAction::Ruler => 5,
+            CaptureAction::PreviousArea => 10,
         }
     }
 
@@ -51,8 +57,9 @@ impl CaptureAction {
             CaptureAction::Window => "the window screenshot",
             CaptureAction::Screen => "the full-screen screenshot",
             CaptureAction::Scrolling => "the scrolling screenshot",
-            CaptureAction::Color => "the colour picker",
+            CaptureAction::Color => "the color picker",
             CaptureAction::Ruler => "the onscreen ruler",
+            CaptureAction::PreviousArea => "the previous area screenshot",
         }
     }
 
@@ -65,6 +72,7 @@ impl CaptureAction {
             CaptureAction::Scrolling => &settings.capture_scrolling_hotkey,
             CaptureAction::Color => &settings.pick_color_hotkey,
             CaptureAction::Ruler => &settings.ruler_hotkey,
+            CaptureAction::PreviousArea => &settings.capture_previous_hotkey,
         }
     }
 }
@@ -156,7 +164,7 @@ pub struct Bindings {
     pub new_clip: String,
     /// One per [`CaptureAction`] and [`RecordAction`], indexed by their slots.
     /// Empty means the action has no shortcut at all.
-    captures: [String; 10],
+    captures: [String; 11],
     /// Print Screen, when the user has asked the app to take the key over. It is
     /// spelled as a binding like any other so it is registered and released with
     /// the rest; what it *does* is decided from the default capture type.
@@ -165,7 +173,7 @@ pub struct Bindings {
 
 impl Bindings {
     pub fn from_settings(settings: &Settings) -> Self {
-        let mut captures: [String; 10] = Default::default();
+        let mut captures: [String; 11] = Default::default();
         for action in CaptureAction::ALL {
             captures[action.slot()] = action.configured(settings).trim().to_string();
         }
@@ -457,6 +465,7 @@ mod tests {
                 String::new(),
                 String::new(),
                 String::new(),
+                String::new(),
             ],
             print_screen: false,
         }
@@ -574,6 +583,24 @@ mod tests {
     }
 
     #[test]
+    fn a_previous_area_shortcut_is_registered_and_maps_back() {
+        let mut settings = Settings::default();
+        settings.capture_previous_hotkey = "Ctrl+Alt+B".into();
+        let bindings = Bindings::from_settings(&settings);
+        let required = bindings
+            .required()
+            .expect("a valid previous-area shortcut");
+        assert!(required.iter().any(|(owner, text, _)| {
+            *owner == "the previous area screenshot" && *text == "Ctrl+Alt+B"
+        }));
+        let pressed = "Ctrl+Alt+B".parse().expect("a valid shortcut");
+        assert_eq!(
+            capture_action(&pressed, &settings),
+            Some(CaptureAction::PreviousArea)
+        );
+    }
+
+    #[test]
     fn the_new_clip_shortcut_is_registered_and_cannot_double_as_another() {
         let mut settings = Settings::default();
         settings.new_clip_hotkey = "Ctrl+Alt+N".into();
@@ -625,7 +652,7 @@ mod tests {
         let error = Bindings::from_settings(&settings)
             .required()
             .expect_err("an unparseable combination is an error, not a silent skip");
-        assert!(error.to_string().contains("colour picker"), "{error}");
+        assert!(error.to_string().contains("color picker"), "{error}");
     }
 
     #[test]

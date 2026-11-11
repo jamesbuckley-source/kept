@@ -17,6 +17,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::capture::Rect;
@@ -434,15 +435,11 @@ pub fn poster(ffmpeg: &Path, video: &Path, out: &Path) -> Result<()> {
     ))
 }
 
-/// Converts a video into an animated GIF at `out`.
+/// The message a conversion stopped by the Cancel button returns.
 ///
-/// One filter graph builds the palette from the clip and applies it in the same
-/// pass: a palette read from a single frame leaves a screen recording blotchy, and
-/// the two-file dance (a `palette.png` beside the output) would leave a stray file
-/// in whatever folder the user chose.
-pub fn gif(ffmpeg: &Path, video: &Path, out: &Path, fps: u32, width: u32) -> Result<()> {
-    gif_with_progress(ffmpeg, video, out, fps, width, &|_| {})
-}
+/// The interface compares against it to clear its progress bar quietly rather than
+/// showing an error for something the user asked for.
+pub const GIF_CANCELLED: &str = "GIF conversion cancelled";
 
 /// How good an exported GIF should look: the width it is scaled to and the frame
 /// rate it keeps.
@@ -491,18 +488,30 @@ impl GifQuality {
     }
 }
 
-/// Converts a video into a GIF, reporting how far along it is.
+/// Converts a video into a GIF, reporting how far along it is, stoppable from
+/// another thread.
 ///
 /// FFmpeg's own progress stream is read a line at a time: `-progress pipe:1` writes
 /// `out_time=` as it goes, and the clip's runtime turns that into a percentage. The
 /// runtime comes from FFmpeg's report on the input, so no second tool is needed.
-pub fn gif_with_progress(
+///
+/// One filter graph builds the palette from the clip and applies it in the same
+/// pass: a palette read from a single frame leaves a screen recording blotchy, and
+/// the two-file dance (a `palette.png` beside the output) would leave a stray file
+/// in whatever folder the user chose.
+///
+/// The cancel flag is checked as often as FFmpeg reports, which is several times a
+/// second. Cancelling kills the encoder rather than letting it finish, because the
+/// whole point is that a long conversion should stop when the user says so; the
+/// caller decides what to do with the half-written file.
+pub fn gif_with_cancel(
     ffmpeg: &Path,
     video: &Path,
     out: &Path,
     fps: u32,
     width: u32,
     progress: &dyn Fn(u8),
+    cancel: Option<&AtomicBool>,
 ) -> Result<()> {
     let total = duration_of(ffmpeg, video).unwrap_or(0.0);
     let filters = gif_filters(fps, width);
@@ -530,10 +539,15 @@ pub fn gif_with_progress(
         })
     });
 
+    let stopped = || cancel.is_some_and(|flag| flag.load(Ordering::Relaxed));
     let mut last = u8::MAX;
     if let Some(stdout) = child.stdout.take() {
         use std::io::BufRead;
         for line in std::io::BufReader::new(stdout).lines().map_while(|line| line.ok()) {
+            if stopped() {
+                let _ = child.kill();
+                break;
+            }
             let Some(stamp) = line.strip_prefix("out_time=") else {
                 continue;
             };
@@ -552,6 +566,9 @@ pub fn gif_with_progress(
     let status = child
         .wait()
         .map_err(|e| AppError::msg(format!("could not finish the GIF: {e}")))?;
+    if stopped() {
+        return Err(AppError::msg(GIF_CANCELLED));
+    }
     if !status.success() || !out.is_file() {
         let detail = errors
             .and_then(|handle| handle.join().ok())

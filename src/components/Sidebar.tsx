@@ -54,6 +54,8 @@ interface SidebarProps {
   listLimit: number;
   /** Files clips dropped from the history onto a collection or archive. */
   onDropClips: (ids: number[], collection: Collection) => void;
+  /** Marks clips dropped onto Text ▸ Secrets as secret; only text qualifies. */
+  onDropClipsOnSecrets: (ids: number[]) => void;
   /** Whether the text payload sub-types are expanded. */
   textExpanded: boolean;
   onToggleText: () => void;
@@ -71,6 +73,8 @@ interface SidebarProps {
   onCaptureRegion: () => void;
   onCaptureWindow: () => void;
   onCaptureScreen: () => void;
+  /** Hides the window and repeats the area the last capture covered. */
+  onCapturePrevious: () => void;
   onCaptureScrolling: () => void;
   /** Opens the onscreen ruler. */
   onOpenRuler: () => void;
@@ -387,6 +391,7 @@ export function Sidebar({
   onContextMenuSearch,
   listLimit,
   onDropClips,
+  onDropClipsOnSecrets,
   textExpanded,
   onToggleText,
   imagesExpanded,
@@ -399,6 +404,7 @@ export function Sidebar({
   onCaptureRegion,
   onCaptureWindow,
   onCaptureScreen,
+  onCapturePrevious,
   onCaptureScrolling,
   onOpenRuler,
   onRecord,
@@ -420,6 +426,8 @@ export function Sidebar({
   const [showAllTags, setShowAllTags] = useState(false);
   /** Collection currently highlighted as a drop target. */
   const [dropId, setDropId] = useState<number | null>(null);
+  /** Whether a drag is hovering the Secrets row, which takes clips as a mark. */
+  const [secretsDrop, setSecretsDrop] = useState(false);
   /** The row being renamed in place, and what has been typed so far. */
   const [renaming, setRenaming] = useState<{ kind: "collection" | "tag"; id: number } | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -652,6 +660,7 @@ export function Sidebar({
             onCaptureRegion={onCaptureRegion}
             onCaptureWindow={onCaptureWindow}
             onCaptureScreen={onCaptureScreen}
+            onCapturePrevious={onCapturePrevious}
             onCaptureScrolling={onCaptureScrolling}
             onOpenRuler={onOpenRuler}
             onRecord={onRecord}
@@ -687,6 +696,7 @@ export function Sidebar({
         onCaptureRegion={onCaptureRegion}
         onCaptureWindow={onCaptureWindow}
         onCaptureScreen={onCaptureScreen}
+        onCapturePrevious={onCapturePrevious}
         onCaptureScrolling={onCaptureScrolling}
         onOpenRuler={onOpenRuler}
         onRecord={onRecord}
@@ -739,14 +749,40 @@ export function Sidebar({
                 onClick={() => onSelect({ kind: "content", contentKind })}
               />
             ))}
-            <NavItem
-              indent
-              icon={<IconShield className="size-3" />}
-              label="Secrets"
-              title="Clips flagged as credential-like"
-              active={view.kind === "secrets"}
-              onClick={() => onSelect({ kind: "secrets" })}
-            />
+            <div
+              onDragOver={(event) => {
+                if (!Array.from(event.dataTransfer.types).includes(CLIP_DRAG_TYPE)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+                setSecretsDrop(true);
+              }}
+              onDragLeave={() => setSecretsDrop(false)}
+              onDrop={(event) => {
+                if (!Array.from(event.dataTransfer.types).includes(CLIP_DRAG_TYPE)) return;
+                event.preventDefault();
+                setSecretsDrop(false);
+                try {
+                  const parsed: unknown = JSON.parse(event.dataTransfer.getData(CLIP_DRAG_TYPE));
+                  if (!Array.isArray(parsed)) return;
+                  const ids = parsed.filter((id): id is number => typeof id === "number");
+                  if (ids.length > 0) onDropClipsOnSecrets(ids);
+                } catch {
+                  // A foreign payload is not ours to interpret.
+                }
+              }}
+              className={`rounded transition-colors ${
+                secretsDrop ? "bg-accent/15 ring-1 ring-accent" : ""
+              }`}
+            >
+              <NavItem
+                indent
+                icon={<IconShield className="size-3" />}
+                label="Secrets"
+                title="Clips flagged as credential-like. Drop text clips here to mark them secret."
+                active={view.kind === "secrets"}
+                onClick={() => onSelect({ kind: "secrets" })}
+              />
+            </div>
           </>
         )}
         <ExpandableNavItem
@@ -770,8 +806,8 @@ export function Sidebar({
               indent
               icon={<IconImage className="size-3" />}
               label="Images (All)"
-              count={stats?.images}
-              title="Every image clip: screenshots, copied pictures and captured frames"
+              count={stats ? stats.images + stats.imageFiles : undefined}
+              title="Every image clip: screenshots, copied pictures and images copied as files"
               active={view.kind === "image"}
               onClick={() => onSelect({ kind: "image" })}
             />

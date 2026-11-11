@@ -5,6 +5,7 @@
 //! hotkey, a command from the UI) goes through here so that focus and z-order
 //! behave consistently.
 
+use tauri::window::Color;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 use crate::models::{ClipDetail, ClipKind};
@@ -42,6 +43,48 @@ pub const ROUTE_HISTORY: &str = "history";
 
 pub fn window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
     app.get_webview_window(WINDOW_LABEL)
+}
+
+/// The color every solid window paints behind its page.
+///
+/// A webview paints nothing until its page has loaded, and the platform default
+/// underneath is what flashes as a black box with a white inside when a window
+/// opens. The theme's canvas color is what the page paints a moment later, so the
+/// hand-off is invisible.
+fn theme_background<R: Runtime>(app: &AppHandle<R>) -> Color {
+    let canvas = app
+        .state::<crate::AppState>()
+        .store
+        .settings()
+        .theme
+        .canvas();
+    parse_hex_color(&canvas).unwrap_or(Color(11, 14, 20, 255))
+}
+
+fn parse_hex_color(value: &str) -> Option<Color> {
+    let digits = value.trim().strip_prefix('#')?;
+    if digits.len() != 6 {
+        return None;
+    }
+    let channel = |range: std::ops::Range<usize>| u8::from_str_radix(&digits[range], 16).ok();
+    Some(Color(channel(0..2)?, channel(2..4)?, channel(4..6)?, 255))
+}
+
+/// Paints the theme's canvas color behind the page of every window open now.
+///
+/// The capture overlays are deliberately see-through and are left alone; painting
+/// them would put a slab of the app's background behind a screenshot.
+pub fn apply_theme_background<R: Runtime>(app: &AppHandle<R>) {
+    let color = theme_background(app);
+    for window in app.webview_windows().values() {
+        match window.label() {
+            RECORD_AREA_LABEL | RECORD_BAR_LABEL | COUNTDOWN_LABEL => continue,
+            _ => {}
+        }
+        if let Err(e) = window.set_background_color(Some(color)) {
+            log::debug!("could not paint the background of {}: {e}", window.label());
+        }
+    }
 }
 
 /// Raw handle of our own window, used to avoid mistaking it for "the app the user
@@ -124,6 +167,9 @@ pub fn open_settings<R: Runtime>(app: &AppHandle<R>, section: Option<&str>) -> t
     .title("Kept Settings")
     .inner_size(780.0, 820.0)
     .min_inner_size(560.0, 480.0)
+    // Painted before the page draws, so opening the window does not flash the
+    // platform's default background first.
+    .background_color(theme_background(app))
     .always_on_top(always_on_top(app))
     .center()
     .build()?;
@@ -173,6 +219,7 @@ pub fn open_add_clip<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     .title("New clip")
     .inner_size(460.0, 420.0)
     .min_inner_size(360.0, 280.0)
+    .background_color(theme_background(app))
     .always_on_top(always_on_top(app))
     .center()
     .build()?;
@@ -222,6 +269,7 @@ fn open_stack_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     .title("Paste stack")
     .inner_size(320.0, 460.0)
     .min_inner_size(260.0, 240.0)
+    .background_color(theme_background(app))
     .always_on_top(true)
     .decorations(false)
     .skip_taskbar(true)
@@ -284,6 +332,7 @@ fn open_sticky_clip<R: Runtime>(
     .min_inner_size(220.0, 160.0)
     .resizable(true)
     .decorations(false)
+    .background_color(theme_background(app))
     .always_on_top(true)
     .build()?;
     let _ = window.set_focus();
@@ -626,6 +675,31 @@ mod tests {
     use super::*;
     use crate::models::{ClipKind, ClipSummary};
 
+    #[test]
+    fn hex_colors_parse_into_channels() {
+        assert_eq!(parse_hex_color("#0b0e14"), Some(Color(11, 14, 20, 255)));
+        assert_eq!(parse_hex_color("#eef1f6"), Some(Color(238, 241, 246, 255)));
+        assert_eq!(parse_hex_color("0b0e14"), None, "the hash is required");
+        assert_eq!(parse_hex_color("#fff"), None, "only six digits are accepted");
+    }
+
+    #[test]
+    fn the_window_background_follows_the_theme_mode() {
+        let dark = crate::settings::Theme::default();
+        assert_eq!(dark.canvas(), "#0b0e14");
+        let light = crate::settings::Theme {
+            mode: "light".into(),
+            ..Default::default()
+        };
+        assert_eq!(light.canvas(), "#eef1f6");
+        let mut custom = crate::settings::Theme {
+            mode: "custom".into(),
+            ..Default::default()
+        };
+        custom.colors.canvas = "#123456".into();
+        assert_eq!(custom.canvas(), "#123456");
+    }
+
     fn detail(kind: ClipKind, width: Option<i64>, height: Option<i64>) -> ClipDetail {
         ClipDetail {
             summary: ClipSummary {
@@ -645,6 +719,7 @@ mod tests {
                 media_locked: false,
                 file_count: 0,
                 char_count: 0,
+                split_item_count: 0,
                 has_ocr: false,
                 has_note: false,
                 color: None,

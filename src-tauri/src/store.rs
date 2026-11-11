@@ -678,6 +678,15 @@ impl Store {
             None
         };
 
+        // Splitting is a text-only action, and one list item is nothing to split.
+        // A sealed clip is left out too: the backend refuses to copy its lines into
+        // the open, so the menu should not offer it.
+        let split_item_count = if row.kind == ClipKind::Text && row.secret_level.is_none() {
+            split_lines(body.as_deref().unwrap_or(&preview)).len() as i64
+        } else {
+            0
+        };
+
         let summary = ClipSummary {
             id: row.id,
             kind: row.kind,
@@ -697,6 +706,7 @@ impl Store {
             media_locked: row.media_sealed && self.vault_key().is_none(),
             file_count: row.file_count,
             char_count: row.char_count,
+            split_item_count,
             has_ocr: ocr.as_deref().is_some_and(|text| !text.trim().is_empty()),
             has_note: note.as_deref().is_some_and(|text| !text.trim().is_empty()),
             color,
@@ -1006,6 +1016,22 @@ impl Store {
             _ => None,
         };
 
+        // A copied image file keeps its own file on disk; only the card's preview is
+        // generated here. That is what lets the Files view show what the file is,
+        // and the Images view list it beside the screenshots.
+        let files_thumb = match &new.content {
+            ClipContent::Files(paths) => paths.iter().find_map(|path| {
+                match media::write_file_thumbnail(&self.media_dir, Path::new(path)) {
+                    Ok(found) => found,
+                    Err(e) => {
+                        log::debug!("could not preview {path}: {e}");
+                        None
+                    }
+                }
+            }),
+            _ => None,
+        };
+
         let secret_level = match &new.content {
             ClipContent::Text(text) => {
                 let settings = self.settings();
@@ -1027,6 +1053,7 @@ impl Store {
                 &new,
                 now,
                 media.as_ref(),
+                files_thumb.as_deref(),
                 secret_level.as_deref(),
             )
         };
@@ -1036,6 +1063,9 @@ impl Store {
             Err(e) => {
                 if let Some(files) = &media {
                     files.cleanup(&self.media_dir);
+                }
+                if let Some(thumb) = &files_thumb {
+                    let _ = std::fs::remove_file(self.media_dir.join(thumb));
                 }
                 return Err(e);
             }
@@ -1193,6 +1223,65 @@ impl Store {
             } else {
                 processed += 1;
             }
+        }
+        processed
+    }
+
+    /// Gives file clips captured before the Files view drew previews their
+    /// thumbnail. Returns how many clips gained one.
+    ///
+    /// Only the first path that decodes as a picture is previewed, and a clip whose
+    /// files are all gone is left without one rather than retried for ever.
+    pub fn file_thumbnails_pending(&self) -> usize {
+        let rows: Vec<(i64, Vec<String>)> = {
+            let conn = self.conn.lock();
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT id, files FROM clips WHERE kind = 'files' AND thumb_path IS NULL",
+            ) else {
+                return 0;
+            };
+            let Ok(mapped) = stmt.query_map([], |row| {
+                let files: Option<Vec<u8>> = row.get(1)?;
+                Ok((row.get::<_, i64>(0)?, files))
+            }) else {
+                return 0;
+            };
+            mapped
+                .filter_map(std::result::Result::ok)
+                .map(|(id, files)| {
+                    let paths = files
+                        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+                        .unwrap_or_default();
+                    (id, paths)
+                })
+                .collect()
+        };
+
+        let mut processed = 0;
+        for (id, paths) in rows {
+            let thumb = paths.iter().find_map(|path| {
+                media::write_file_thumbnail(&self.media_dir, Path::new(path))
+                    .ok()
+                    .flatten()
+            });
+            let Some(thumb) = thumb else {
+                continue;
+            };
+            {
+                let conn = self.conn.lock();
+                if let Err(e) = conn.execute(
+                    "UPDATE clips SET thumb_path = ?2 WHERE id = ?1",
+                    params![id, thumb],
+                ) {
+                    log::warn!("could not record the preview for clip {id}: {e}");
+                    let _ = std::fs::remove_file(self.media_dir.join(&thumb));
+                    continue;
+                }
+            }
+            if let Err(e) = self.refresh_entry(id) {
+                log::warn!("could not refresh clip {id}: {e}");
+            }
+            processed += 1;
         }
         processed
     }
@@ -2915,6 +3004,7 @@ impl Store {
             pinned: 0,
             images: 0,
             files: 0,
+            image_files: 0,
             archived: 0,
             colors: 0,
             media_bytes: 0,
@@ -2939,7 +3029,14 @@ impl Store {
             }
             match entry.summary.kind {
                 ClipKind::Image => stats.images += 1,
-                ClipKind::Files => stats.files += 1,
+                ClipKind::Files => {
+                    stats.files += 1;
+                    // Counted apart from `images` so the text count, which is
+                    // `total - images - files`, cannot double-count it.
+                    if entry.summary.thumb_file.is_some() {
+                        stats.image_files += 1;
+                    }
+                }
                 ClipKind::Text => {}
             }
         }
@@ -3852,6 +3949,7 @@ fn insert_row(
     new: &NewClip,
     now: i64,
     media: Option<&ImageFiles>,
+    files_thumb: Option<&str>,
     secret_level: Option<&str>,
 ) -> Result<i64> {
     let preview = new.preview.as_bytes().to_vec();
@@ -3915,7 +4013,7 @@ fn insert_row(
             body,
             files,
             media.map(|m| m.image.as_str()),
-            media.map(|m| m.thumb.as_str()),
+            media.map(|m| m.thumb.as_str()).or(files_thumb),
             width,
             height,
             new.source_app,
@@ -4069,10 +4167,16 @@ fn matches_filter(
     tag: Option<&str>,
     archived: &HashSet<i64>,
 ) -> bool {
-    if let Some(kind) = filter.kind
-        && summary.kind != kind
-    {
-        return false;
+    if let Some(kind) = filter.kind {
+        // A file list that begins with a picture is listed with the images too: it
+        // is a copy of a picture the user made, and its card can show it. The
+        // preview is only generated for image files, so its presence is the test.
+        let image_file = kind == ClipKind::Image
+            && summary.kind == ClipKind::Files
+            && summary.thumb_file.is_some();
+        if summary.kind != kind && !image_file {
+            return false;
+        }
     }
     if filter.pinned_only && !summary.pinned {
         return false;
@@ -4100,6 +4204,16 @@ fn matches_filter(
     }
     if let Some(before) = filter.before
         && summary.created_at >= before
+    {
+        return false;
+    }
+    if let Some(start) = filter.day_start
+        && summary.created_at < start
+    {
+        return false;
+    }
+    if let Some(end) = filter.day_end
+        && summary.created_at >= end
     {
         return false;
     }
@@ -6915,6 +7029,101 @@ mod tests {
         );
         assert_eq!(by_color.total, 1);
         assert_eq!(by_color.items[0].id, older);
+
+        // A single day is a half-open span, so the clip captured on it is found and
+        // the boundary itself is excluded.
+        let captured = store.detail(older).unwrap().summary.created_at;
+        let on_day = store.list(
+            &ClipFilter {
+                day_start: Some(captured),
+                day_end: Some(captured + 1),
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert_eq!(on_day.total, 1);
+        assert_eq!(on_day.items[0].id, older);
+
+        let earlier = store.list(
+            &ClipFilter {
+                day_start: Some(captured - 10),
+                day_end: Some(captured),
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert!(
+            earlier.items.iter().all(|item| item.id != older),
+            "the end of the span is exclusive"
+        );
+    }
+
+    #[test]
+    fn a_copied_image_file_is_previewed_and_listed_with_the_images() {
+        let (store, dir) = test_store();
+        let source = dir.path().join("holiday.png");
+        image::RgbaImage::from_pixel(16, 16, image::Rgba([10, 20, 30, 255]))
+            .save(&source)
+            .expect("write the picture being copied");
+        let path = source.to_string_lossy().into_owned();
+
+        let id = match store.insert_clip(files_clip(&[&path])).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+
+        let files = store.list(
+            &ClipFilter {
+                kind: Some(ClipKind::Files),
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert_eq!(files.total, 1, "the copy stays in Files");
+
+        let images = store.list(
+            &ClipFilter {
+                kind: Some(ClipKind::Image),
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert_eq!(images.total, 1, "and is listed with the images");
+        assert_eq!(images.items[0].id, id);
+        let thumb = images.items[0]
+            .thumb_file
+            .clone()
+            .expect("a preview was generated from the file");
+        assert!(store.media_dir().join(&thumb).is_file());
+        assert_eq!(store.stats().unwrap().image_files, 1);
+    }
+
+    #[test]
+    fn a_copied_file_that_is_not_a_picture_gets_no_preview() {
+        let (store, _dir) = test_store();
+        store
+            .insert_clip(files_clip(&["C:\\definitely\\missing\\notes.txt"]))
+            .unwrap();
+
+        let images = store.list(
+            &ClipFilter {
+                kind: Some(ClipKind::Image),
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert_eq!(images.total, 0, "a text file is not an image");
+        assert_eq!(store.stats().unwrap().image_files, 0);
     }
 
     #[test]

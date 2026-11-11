@@ -90,7 +90,7 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
 #[cfg(not(windows))]
 pub fn pick(_app: &AppHandle) -> Result<Option<String>> {
     Err(AppError::msg(
-        "picking a colour from the screen is only supported on Windows",
+        "picking a color from the screen is only supported on Windows",
     ))
 }
 

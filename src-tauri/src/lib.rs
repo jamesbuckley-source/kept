@@ -147,6 +147,7 @@ pub fn run() {
             commands::capture_screen_region,
             commands::capture_screen_window,
             commands::capture_whole_screen,
+    commands::capture_previous_area,
     commands::capture_scrolling_window,
     commands::cancel_capture_delay,
     commands::open_record_bar,
@@ -176,6 +177,9 @@ pub fn run() {
             commands::copy_clip,
             commands::copy_video_file,
             commands::copy_video_url,
+            commands::copy_video_path,
+            commands::copy_clip_thumbnail,
+            commands::reveal_save_location,
             commands::set_pinned,
             commands::delete_clip,
             commands::delete_clips,
@@ -200,6 +204,7 @@ pub fn run() {
             commands::save_clips,
             commands::export_gif,
     commands::export_gif_clip,
+    commands::cancel_gif_export,
             commands::export_markdown,
             commands::copy_text,
             commands::copy_color,
@@ -282,6 +287,12 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     log::info!("recognised text in {processed} existing image(s)");
                     let _ = ocr_app.emit(clipboard::EVENT_HISTORY_CHANGED, ());
                 }
+                // Copied image files captured before their cards showed a preview.
+                let previewed = ocr_store.file_thumbnails_pending();
+                if previewed > 0 {
+                    log::info!("previewed {previewed} copied image file(s)");
+                    let _ = ocr_app.emit(clipboard::EVENT_HISTORY_CHANGED, ());
+                }
                 if !ocr_store.settings().detect_faces {
                     return;
                 }
@@ -322,6 +333,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     window::set_taskbar_visibility(&handle, settings.show_in_taskbar);
     // The config declares the window not-on-top; the preference decides.
     window::set_always_on_top(&handle, settings.always_on_top);
+    // The main window starts hidden, so this paints the native background before
+    // the first frame can show the platform default through it.
+    window::apply_theme_background(&handle);
 
     if let Err(e) = tray::install(&handle) {
         // A missing tray icon degrades discoverability, but the hotkey still works.
