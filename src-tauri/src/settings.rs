@@ -290,6 +290,34 @@ impl Default for ArchiveDisplay {
     }
 }
 
+/// Longest trigger token the `::` popup accepts. Kept short so the hook only has
+/// to remember a handful of characters.
+pub const MAX_TOKEN_CHARS: usize = 6;
+
+/// Applications the `::` popup never opens in, until the user says otherwise.
+///
+/// Password managers, where a history popup is the last thing a password field
+/// should offer, and the terminals, whose own syntax is full of colons.
+pub const DEFAULT_QUICK_DENIED: &[&str] = &[
+    "1password.exe",
+    "bitwarden.exe",
+    "dashlane.exe",
+    "keepass.exe",
+    "keepassxc.exe",
+    "lastpass.exe",
+    "cmd.exe",
+    "conhost.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "windowsterminal.exe",
+    "wt.exe",
+    "mintty.exe",
+    "alacritty.exe",
+    "wezterm-gui.exe",
+    "conemu.exe",
+    "conemu64.exe",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -404,6 +432,17 @@ pub struct Settings {
     pub ignore_sensitive: bool,
     /// Lower-cased process names whose copies are never recorded.
     pub ignored_apps: Vec<String>,
+    /// Open the `::` auto-complete popup while typing. Off by default: it needs a
+    /// system-wide keyboard hook, which is not something to switch on unasked.
+    pub quick_paste_enabled: bool,
+    /// The characters that open the popup, with no whitespace.
+    pub quick_paste_token: String,
+    /// Lower-cased process names the token does nothing in.
+    pub quick_paste_denied_apps: Vec<String>,
+    /// Let the popup offer text clips.
+    pub quick_paste_text: bool,
+    /// Let the popup offer emoji, matched by name.
+    pub quick_paste_emoji: bool,
     /// Look for faces in screenshots, so images can be filtered as People.
     pub detect_faces: bool,
     /// How long a clip marked secret survives, in minutes. `0` means it is kept
@@ -583,6 +622,14 @@ impl Default for Settings {
             prefer_images_over_text: false,
             ignore_sensitive: true,
             ignored_apps: Vec::new(),
+            quick_paste_enabled: false,
+            quick_paste_token: "::".into(),
+            quick_paste_denied_apps: DEFAULT_QUICK_DENIED
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
+            quick_paste_text: true,
+            quick_paste_emoji: true,
             detect_faces: true,
             secret_max_age_mins: 0,
             max_items: 2000,
@@ -878,13 +925,22 @@ impl Settings {
             }
             cleaned
         };
-        self.ignored_apps = self
-            .ignored_apps
-            .iter()
-            .map(|a| a.trim().to_ascii_lowercase())
-            .filter(|a| !a.is_empty())
+        self.ignored_apps = normalise_apps(&self.ignored_apps);
+
+        // The trigger token is compared character by character against what the
+        // keyboard types, so whitespace and control characters can never be part of
+        // it, and an empty field falls back to `::` rather than disabling the
+        // popup in a way the settings page cannot show.
+        self.quick_paste_token = self
+            .quick_paste_token
+            .chars()
+            .filter(|c| !c.is_whitespace() && !c.is_control())
+            .take(MAX_TOKEN_CHARS)
             .collect();
-        self.ignored_apps.dedup();
+        if self.quick_paste_token.is_empty() {
+            self.quick_paste_token = "::".into();
+        }
+        self.quick_paste_denied_apps = normalise_apps(&self.quick_paste_denied_apps);
 
         // Only known sections can be collapsed, and History is always visible.
         let known = ["collections", "archives", "tags", "utilities", "saved", "text"];
@@ -917,6 +973,26 @@ impl Settings {
         };
         self
     }
+}
+
+/// Trims, lower-cases and de-duplicates a list of process names.
+///
+/// Both deny-lists in the app are compared case-insensitively against the name
+/// Windows reports for a window, so the same name spelled two ways has to collapse
+/// to one entry.
+fn normalise_apps(apps: &[String]) -> Vec<String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for app in apps {
+        let name = app.trim().to_ascii_lowercase();
+        if name.is_empty() || cleaned.contains(&name) {
+            continue;
+        }
+        cleaned.push(name);
+        if cleaned.len() >= 100 {
+            break;
+        }
+    }
+    cleaned
 }
 
 pub fn load(conn: &Connection) -> Result<Settings> {
@@ -1425,6 +1501,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(updated.ignored_apps, vec!["keepassxc.exe"]);
+    }
+
+    #[test]
+    fn quick_paste_is_off_by_default_and_offers_text_and_emoji() {
+        let store = memory_store();
+        let defaults = store.settings();
+        assert!(
+            !defaults.quick_paste_enabled,
+            "a system-wide keyboard hook is never switched on unasked"
+        );
+        assert_eq!(defaults.quick_paste_token, "::");
+        assert!(defaults.quick_paste_text && defaults.quick_paste_emoji);
+        assert!(
+            defaults
+                .quick_paste_denied_apps
+                .iter()
+                .any(|app| app == "keepassxc.exe"),
+            "the password managers are pre-denied"
+        );
+    }
+
+    #[test]
+    fn quick_paste_token_loses_whitespace_and_is_never_empty() {
+        let store = memory_store();
+        let spaced = store
+            .update_settings(&serde_json::json!({ "quickPasteToken": " : : " }))
+            .unwrap();
+        assert_eq!(spaced.quick_paste_token, "::");
+
+        // An empty field falls back rather than leaving the popup unreachable.
+        let empty = store
+            .update_settings(&serde_json::json!({ "quickPasteToken": "   " }))
+            .unwrap();
+        assert_eq!(empty.quick_paste_token, "::");
+
+        let long = store
+            .update_settings(&serde_json::json!({ "quickPasteToken": "abcdefghij" }))
+            .unwrap();
+        assert_eq!(long.quick_paste_token.chars().count(), MAX_TOKEN_CHARS);
+    }
+
+    #[test]
+    fn quick_paste_deny_list_is_normalised_like_the_capture_list() {
+        let store = memory_store();
+        let updated = store
+            .update_settings(
+                &serde_json::json!({ "quickPasteDeniedApps": [" KeepassXC.EXE ", "keepassxc.exe", ""] }),
+            )
+            .unwrap();
+        assert_eq!(updated.quick_paste_denied_apps, vec!["keepassxc.exe"]);
     }
 
     #[test]

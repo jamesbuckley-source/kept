@@ -18,24 +18,30 @@ export type WindowKind =
   | "main"
   | "settings"
   | "add-clip"
+  | "wizard"
   | "sticky"
   | "record-bar"
   | "record-area"
   | "countdown"
-  | "stack";
+  | "stack"
+  | "quick";
 
 export function windowKind(): WindowKind {
   const fromUrl = new URLSearchParams(window.location.search).get("window");
   if (fromUrl === "settings" || fromUrl === "add-clip" || fromUrl === "sticky") return fromUrl;
+  if (fromUrl === "wizard") return fromUrl;
   if (fromUrl === "record-bar" || fromUrl === "record-area" || fromUrl === "countdown") {
     return fromUrl;
   }
   if (fromUrl === "stack") return fromUrl;
+  if (fromUrl === "quick") return fromUrl;
 
   try {
     const label = getCurrentWindow().label;
     if (label === "settings" || label === "add-clip" || label === "stack") return label;
+    if (label === "wizard") return label;
     if (label === "record-bar" || label === "record-area" || label === "countdown") return label;
+    if (label === "quick") return label;
     if (label.startsWith("sticky-")) return "sticky";
   } catch {
     // No Tauri internals: treat it as the main window, which is what a browser

@@ -19,6 +19,9 @@ pub const SETTINGS_LABEL: &str = "settings";
 /// Label of the small "New clip" window; also listed in the capability file.
 pub const ADD_CLIP_LABEL: &str = "add-clip";
 
+/// Label of the setup wizard's own window; also listed in the capability file.
+pub const WIZARD_LABEL: &str = "wizard";
+
 /// Prefix shared by the independent window for each sticky clip.
 pub const STICKY_PREFIX: &str = "sticky-";
 
@@ -28,6 +31,20 @@ pub const RECORD_BAR_LABEL: &str = "record-bar";
 
 /// Label of the paste stack's own window; also listed in the capability file.
 pub const STACK_LABEL: &str = "stack";
+
+/// Label of the `::` auto-complete popup; also listed in the capability file.
+/// Label of the `::` popup; also listed in the capability file.
+pub const QUICK_LABEL: &str = "quick";
+
+/// Width of the `::` popup, in logical pixels.
+///
+/// Fixed: it is a search field over a list of one-line rows, and a resizable
+/// version of it would be a different feature.
+pub const QUICK_WIDTH: f64 = 380.0;
+
+/// Height of the popup as it opens — the search field and one row. The interface
+/// grows the window as the list does; this is only what placement is decided on.
+pub const QUICK_FIRST_HEIGHT: f64 = 92.0;
 
 /// Label of the full-screen window that places a fixed-size recording frame.
 pub const RECORD_AREA_LABEL: &str = "record-area";
@@ -177,6 +194,60 @@ pub fn open_settings<R: Runtime>(app: &AppHandle<R>, section: Option<&str>) -> t
     Ok(())
 }
 
+/// Opens (or focuses) the setup wizard's own window.
+///
+/// The wizard used to be an overlay inside the history window, which made it a
+/// modal that could not be moved off the clips it was asking about. Its own window
+/// has a title bar to drag and a close button; minimising or maximising a
+/// three-step form is not something anyone needs, so those two are switched off.
+pub fn show_wizard<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(existing) = app.get_webview_window(WIZARD_LABEL) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return;
+    }
+    // Same constraint as the settings window: webviews have to be created from the
+    // event loop thread, so the call cannot run on the caller's thread.
+    let handle = app.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("wizard-window".into())
+        .spawn(move || {
+            if let Err(e) = open_wizard(&handle) {
+                log::warn!("could not open the setup wizard: {e}");
+            }
+        })
+    {
+        log::warn!("could not spawn the wizard window thread: {e}");
+    }
+}
+
+/// Opens the setup wizard in its own decorated window.
+pub fn open_wizard<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    const LABEL: &str = WIZARD_LABEL;
+    if let Some(existing) = app.get_webview_window(LABEL) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        LABEL,
+        // Same reason as the settings window: say which window this is in the URL.
+        tauri::WebviewUrl::App("index.html?window=wizard".into()),
+    )
+    .title("Set up Kept")
+    .inner_size(560.0, 780.0)
+    .min_inner_size(460.0, 480.0)
+    .minimizable(false)
+    .maximizable(false)
+    .background_color(theme_background(app))
+    .always_on_top(always_on_top(app))
+    .center()
+    .build()?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 pub fn show_add_clip<R: Runtime>(app: &AppHandle<R>) {
     if app.get_webview_window(ADD_CLIP_LABEL).is_some() {
         if let Err(e) = open_add_clip(app) {
@@ -290,8 +361,204 @@ pub fn close_stack_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn show_sticky_clip<R: Runtime>(app: &AppHandle<R>, id: i64, size: (f64, f64)) {
-    let label = format!("{STICKY_PREFIX}{id}");
+/// True while the `::` popup is on screen.
+///
+/// The trigger asks this before doing anything else: a second token typed while the
+/// popup is up would otherwise replace the list the user is typing into.
+pub fn quick_is_open<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.get_webview_window(QUICK_LABEL).is_some()
+}
+
+/// Closes the `::` popup.
+///
+/// It is destroyed rather than hidden, and rebuilt for the next trigger: the popup
+/// is a fresh search every time, and a leftover window would have to be reset by
+/// hand.
+pub fn close_quick<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(QUICK_LABEL) {
+        // `destroy` skips the close-request handshake and tears the webview down
+        // directly. The popup has nothing to save, and `close` can be swallowed
+        // while the page is still starting up, which leaves the box on screen.
+        if let Err(e) = window.destroy() {
+            log::warn!("could not close the quick popup: {e}");
+        }
+    }
+}
+
+/// Shows the `::` popup under `caret`, or under the pointer when the application
+/// being typed into does not report a caret.
+pub fn show_quick<R: Runtime>(app: &AppHandle<R>, caret: Option<(i32, i32)>) {
+    if let Some(existing) = app.get_webview_window(QUICK_LABEL) {
+        // A leftover window from a previous trigger is closed rather than shown
+        // again: it would still hold the old search.
+        let _ = existing.destroy();
+    }
+    let origin = quick_origin(caret, window_scale(app));
+    if let Err(e) = open_quick(app, origin) {
+        log::warn!("could not open the quick popup: {e}");
+    }
+}
+
+fn open_quick<R: Runtime>(app: &AppHandle<R>, origin: (i32, i32)) -> tauri::Result<()> {
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        QUICK_LABEL,
+        tauri::WebviewUrl::App("index.html?window=quick".into()),
+    )
+    .title("Kept quick paste")
+    // One row and the search field to begin with; the interface grows it as the
+    // list does.
+    .inner_size(QUICK_WIDTH, QUICK_FIRST_HEIGHT)
+    .resizable(false)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .background_color(theme_background(app))
+    .visible(false)
+    .build()?;
+    // Placed physically rather than through the builder: the caret arrives in
+    // physical pixels from an application that may be on a differently scaled
+    // monitor than the one this window would be measured against.
+    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+        origin.0, origin.1,
+    )));
+    let _ = window.show();
+    // Shown is not focused: the keystroke that asked for this window went to the
+    // application being typed into, so Windows refuses the ordinary focus call and
+    // the popup would sit there without the keyboard.
+    #[cfg(windows)]
+    if let Ok(handle) = window.hwnd() {
+        if !crate::paste::take_foreground(handle.0 as isize) {
+            log::warn!("could not take the foreground for the quick popup");
+        }
+    }
+    let _ = window.set_focus();
+
+    // Losing the focus is a dismissal, so it is enforced here as well as in the
+    // page: the popup belongs to the application it was opened over, and anything
+    // that takes the attention away means the user has moved on. A webview that is
+    // busy — mid-commit, or waiting on a slow backend call — cannot be relied on to
+    // report its own blur, which is how the menu used to be left behind.
+    {
+        let app = app.clone();
+        let was_focused = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        window.on_window_event(move |event| {
+            let tauri::WindowEvent::Focused(focused) = event else {
+                return;
+            };
+            if *focused {
+                was_focused.store(true, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            // A blur before the window was ever activated is the platform catching
+            // up with the window's own creation, not the user looking elsewhere.
+            if !was_focused.load(std::sync::atomic::Ordering::Relaxed) {
+                return;
+            }
+            // Closed from another thread, and only after a beat: the platform
+            // sometimes reports a blur immediately after the activation it just
+            // gave us, and a menu that vanished on its own would be worse than one
+            // that takes a moment to go.
+            let app = app.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                let still_ours = app
+                    .get_webview_window(QUICK_LABEL)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false);
+                if !still_ours {
+                    close_quick(&app);
+                }
+            });
+        });
+    }
+    Ok(())
+}
+
+/// Where the popup's top-left corner goes, in physical screen pixels.
+///
+/// It hangs just under the caret, and sits above it when the bottom of the monitor
+/// is close. Only the height it opens at is used to decide: the box grows downward
+/// from there, so a long list covers the caret rather than floating a hundred
+/// pixels away from it.
+fn quick_origin(caret: Option<(i32, i32)>, scale: f64) -> (i32, i32) {
+    let Some(point) = caret.or_else(cursor_point) else {
+        return (200, 200);
+    };
+    let width = (QUICK_WIDTH * scale).round() as i32;
+    let first = (QUICK_FIRST_HEIGHT * scale).round() as i32;
+    let gap = (18.0 * scale).round() as i32;
+    let Some((left, top, right, bottom)) = work_area(point) else {
+        return (point.0, point.1 + gap);
+    };
+
+    let x = point.0.clamp(left, (right - width).max(left));
+    let below = point.1 + gap;
+    let y = if below + first <= bottom {
+        below
+    } else {
+        (point.1 - first - gap).max(top)
+    };
+    (x, y)
+}
+
+fn window_scale<R: Runtime>(app: &AppHandle<R>) -> f64 {
+    window(app)
+        .and_then(|window| window.scale_factor().ok())
+        .unwrap_or(1.0)
+}
+
+#[cfg(windows)]
+fn cursor_point() -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    let mut point = POINT::default();
+    // SAFETY: GetCursorPos only writes to the point it is given.
+    unsafe { GetCursorPos(&mut point).is_ok().then_some((point.x, point.y)) }
+}
+
+#[cfg(not(windows))]
+fn cursor_point() -> Option<(i32, i32)> {
+    None
+}
+
+/// Work area of the monitor `point` is on, as `(left, top, right, bottom)`.
+#[cfg(windows)]
+fn work_area(point: (i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    };
+
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the monitor handle is only used for the length of this call, and the
+    // struct is the size the call is told to expect.
+    unsafe {
+        let monitor = MonitorFromPoint(
+            POINT {
+                x: point.0,
+                y: point.1,
+            },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        if monitor.is_invalid() || !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return None;
+        }
+    }
+    let work = info.rcWork;
+    Some((work.left, work.top, work.right, work.bottom))
+}
+
+#[cfg(not(windows))]
+fn work_area(_point: (i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    None
+}
+
+pub fn show_sticky_clip<R: Runtime>(app: &AppHandle<R>, id: i64, size: (f64, f64)) {    let label = format!("{STICKY_PREFIX}{id}");
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.show();
         let _ = existing.set_focus();

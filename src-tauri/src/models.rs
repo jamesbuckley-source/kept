@@ -187,6 +187,25 @@ pub struct RichText {
     pub rtf: Option<String>,
 }
 
+/// One row of the `::` auto-complete popup.
+///
+/// Deliberately small: the popup is ten single-line rows, so shipping whole clip
+/// bodies over IPC for it would cost far more than it shows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickItem {
+    /// The clip to paste. Emoji rows are built in the interface, where the emoji
+    /// names live, and carry `0`.
+    pub id: i64,
+    pub kind: ClipKind,
+    /// The one line the row shows.
+    pub label: String,
+    /// Where it came from, shown small at the end of the row.
+    pub detail: Option<String>,
+    /// True when the clip is sealed and shows a placeholder instead of its text.
+    pub secret: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipPage {
@@ -279,6 +298,11 @@ pub struct ClipFilter {
     pub gif_only: bool,
     /// Restrict to clips whose recovered asset is a video.
     pub video_only: bool,
+    /// Order by recency alone, ignoring the pinned-first rule.
+    ///
+    /// The `::` popup needs this: its first row has to be the clip copied a moment
+    /// ago, not a clip the user pinned weeks earlier.
+    pub recency_first: bool,
 }
 
 /// One item in the paste stack.

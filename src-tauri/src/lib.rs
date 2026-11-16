@@ -9,6 +9,7 @@
 //! are served to the webview through a dedicated `media` URI scheme.
 
 mod animated;
+mod autocomplete;
 mod capture;
 mod clipboard;
 mod color;
@@ -166,6 +167,7 @@ pub fn run() {
             commands::open_settings_window,
             commands::open_settings_section,
             commands::open_add_clip_window,
+    commands::open_wizard_window,
             commands::open_sticky_clip_window,
             commands::create_text_clip,
             commands::import_dropped_files,
@@ -225,6 +227,7 @@ pub fn run() {
             commands::add_scheme_color,
             commands::reveal_clip,
 commands::edit_clip,
+commands::detect_keptcraft,
             commands::reveal_archive,
             commands::get_settings,
             commands::update_settings,
@@ -244,12 +247,17 @@ commands::edit_clip,
             commands::stack_paste_next,
             commands::open_stack_window,
             commands::close_stack_window,
+            commands::quick_items,
+            commands::quick_commit_clip,
+            commands::quick_commit_text,
+            commands::quick_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building the tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 hotkey::release(app);
+                autocomplete::stop();
                 if let Some(state) = app.try_state::<AppState>() {
                     state.watcher.stop();
                 }
@@ -362,6 +370,10 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     sync_autostart(&handle, settings.launch_at_login);
     watcher.start(handle.clone(), Arc::clone(&store));
+
+    // Off unless the user asked for it, but adopted here so a stored "on" installs
+    // the hook at launch rather than at the next settings write.
+    autocomplete::apply(&handle, &settings);
 
     // Stay out of the way on every launch except the very first, where the window
     // doubles as an explanation of what just installed itself.

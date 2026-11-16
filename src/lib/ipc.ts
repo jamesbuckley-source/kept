@@ -17,6 +17,7 @@ import type {
   GifQuality,
   GifResult,
   MarkdownExport,
+  QuickItem,
   RecordStatus,
   RecordToolchain,
   RichText,
@@ -266,6 +267,32 @@ export function setPinned(id: number, pinned: boolean): Promise<void> {
   return invoke("set_pinned", { id, pinned });
 }
 
+/**
+ * The rows the `::` popup shows.
+ *
+ * One call serves both states: nothing typed answers the clips used most
+ * recently, and two characters or more answers a search. Emoji are matched in the
+ * interface, where the names live.
+ */
+export function quickItems(query: string, limit = 10): Promise<QuickItem[]> {
+  return invoke<QuickItem[]>("quick_items", { query, limit });
+}
+
+/** Pastes a clip into the window the popup was opened from. */
+export function quickCommitClip(id: number): Promise<void> {
+  return invoke("quick_commit_clip", { id });
+}
+
+/** Pastes literal text: what an emoji row commits. */
+export function quickCommitText(text: string): Promise<void> {
+  return invoke("quick_commit_text", { text });
+}
+
+/** Dismisses the popup without pasting anything. */
+export function quickClose(): Promise<void> {
+  return invoke("quick_close");
+}
+
 // ---- paste stack -----------------------------------------------------------
 
 /** The queue, in paste order. */
@@ -390,6 +417,11 @@ export function openSettingsWindow(): Promise<void> {
 /** Opens settings scrolled to one section, by slug, e.g. "screen-recording". */
 export function openSettingsSection(section: string): Promise<void> {
   return invoke("open_settings_section", { section });
+}
+
+/** Opens the setup wizard in its own window. */
+export function openWizardWindow(): Promise<void> {
+  return invoke("open_wizard_window");
 }
 
 /** Opens the small window used to type a new clip. */
@@ -620,6 +652,14 @@ export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
 /** Reports whether a hotkey string parses, without saving it. */
 export function validateHotkey(hotkey: string): Promise<string> {
   return invoke<string>("validate_hotkey", { hotkey });
+}
+
+/**
+ * Finds an installed KeptCraft and answers with the image editor command line
+ * that points at it; null when it is not installed.
+ */
+export function detectKeptCraft(): Promise<string | null> {
+  return invoke<string | null>("detect_keptcraft");
 }
 
 export function hideWindow(): Promise<void> {

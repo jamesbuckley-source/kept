@@ -6,11 +6,13 @@
     "main",
     "settings",
     "add-clip",
+    "wizard",
     "sticky-*",
     "record-bar",
     "record-area",
     "countdown",
-    "stack"
+    "stack",
+    "quick"
   ],
   "permissions": [
     "core:default",

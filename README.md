@@ -88,6 +88,8 @@ retention, theme and sounds. It can be re-run from Settings at any time.*
 - **Reveals** clips in Explorer from a right-click menu; each archive owns a folder there.
 - **Updates itself** from signed GitHub releases, with a daily check you can turn off.
 - **Pastes back** on demand into whatever you were working in (opt-in; off by default).
+- **Pastes as you type** — with quick paste switched on, `::` in any other application opens a
+  small search box and pastes the clip you pick into the window you were already writing in.
 - **Pauses capture** on demand — a private mode for 15 minutes, an hour, or until restart.
 - **Finds things with operators** — `kind:image`, `tag:invoice`, `app:code`, `before:2024-05-01`,
   `day:2024-05-01`,
@@ -215,6 +217,7 @@ Both, by design:
 | `Ctrl+Alt+P` | Toggle private mode, pausing capture (configurable) |
 | *your own* | Open the New clip window (*Settings → Activation → New clip shortcut*; empty by default) |
 | `Alt+Shift+V` | Paste the next paste-stack item and use it up (*Settings → Activation → Paste stack shortcut*) |
+| `::` | Open the quick paste box while typing in another application (*Settings → Quick paste*, off by default) |
 | `↑` `↓` | Move the selection |
 | `PgUp` `PgDn` `Home` `End` | Jump through the list |
 | `Enter` | Copy the selected clip, and paste it if auto-paste is on |
@@ -349,6 +352,41 @@ that the newest are refused with a message rather than the oldest being silently
 a queued clip removes its row, while a line split out of a clip stays put — it is a copy, not a
 reference.
 
+## Quick paste
+
+Typing `::` while writing in any application opens a small box that searches Kept without leaving
+the sentence you are writing. It is the one part of Kept that works outside its own window, so it is
+**off until you switch it on** in *Settings → Quick paste*.
+
+- **What it opens on** — the clip you used a moment ago, one row, ready for `Enter`.
+- **Down for more** — the first `↓` reveals the ten most recent copies; further presses walk down to older
+  ones, and `↑` climbs back until the list collapses to the single row again.
+- **Typing searches** — two characters turn the box into a search over the whole history, ranked the
+  same way the overlay ranks it. `Backspace` back to empty returns to the recent list. With *Offer
+  emoji* on, names are matched too (`::smile`).
+- **`Enter` pastes** into the window you were typing in; `Esc`, a click outside or losing focus closes
+  the box and pastes nothing.
+- **What it offers** — text clips, and emoji matched by name.
+- **The trigger is yours** — `Settings → Quick paste → Trigger` takes any run of up to six
+  characters, with no spaces. It is matched against the characters the keyboard actually produces, so
+  it works on layouts where `:` is not where you would expect it.
+- **Where it stays out of the way** — *Never there* is a list of process names, pre-filled with the
+  password managers and the terminal hosts. In those applications the trigger does nothing at all:
+  no box, and the characters stay where you typed them. Kept's own windows never trigger it either.
+
+How the trigger works, and why it asks permission first: noticing two characters typed in *another*
+application needs a system-wide keyboard hook. Kept installs one only while the switch is on, and the
+hook does exactly one thing — it compares the last few characters against your trigger and forgets
+them. Nothing is logged, buffered to disk or sent anywhere, and the hook is removed the moment the
+setting goes off. There are three consequences worth knowing:
+
+- The two characters are typed into the document and then removed with two backspaces a moment
+  later, so a very slow application may show them for a fraction of a second.
+- A caret position is not available in every application — terminals and many Electron applications
+  report none — and the box falls back to hanging under the mouse pointer.
+- A window from a program running as administrator cannot be typed into from here, so the trigger
+  stays inert over one rather than swallowing the characters and pasting nothing.
+
 ## Bulk actions
 
 `Ctrl+Click` extends the selection — the clip that was already highlighted joins the group on the
@@ -454,11 +492,20 @@ timer leaves it alone rather than destroying something you copied in the meantim
 ## Settings
 
 On a fresh install, a three-step **setup wizard** opens the first time the window appears. It
-covers the global hotkey, *Start with Windows*, auto-paste, image and file capture,
-password-manager exclusions, a retention preset, how likely secrets are handled, and a theme and
-sounds. Choices land in the same settings store as the Settings window and can be changed there
-later; *Settings → About → Setup wizard* reopens the wizard. Upgraded installations are marked
-complete by the store migration and are never interrupted by it.
+covers the global hotkey, *Start with Windows*, auto-paste, quick paste, image and file capture,
+password-manager exclusions, retention, how likely secrets are handled, and a theme, sounds and the
+image editor.
+Retention is chosen from presets — 500 or 2,000 clips, 1, 30 or 90 days, or forever — or typed in:
+**Custom clips** keeps the newest *n*, **Custom days** forgets anything older than *n* days.
+When KeptCraft is installed the last step offers to make it the image editor, which is the same
+detection **Detect KeptCraft** runs in Settings.
+Choices land in the same settings store as the Settings window and can be changed there later;
+*Settings → About → Setup wizard* reopens the wizard. Upgraded installations are marked complete
+by the store migration and are never interrupted by it.
+
+The wizard has a window of its own, opened on first run and from Settings: a decorated window with
+a title bar to drag and a close button, and no minimise or maximise buttons, because a three-step
+form has no reason to fill the screen. Closing it on a first run counts as *Skip setup*.
 
 Settings open in their own window — the gear in the title bar or *Settings…* in the tray menu
 opens (or focuses) a normal decorated window with minimise, maximise and close buttons, leaving
@@ -468,8 +515,8 @@ The page is a run of collapsible sections, all collapsed each time settings open
 list is readable at a glance instead of a long scroll. Click a heading to unfold it; the choice is
 not remembered beyond the window closing or the app being summoned again, which keeps the page
 predictable. **About** sits first — the version, the update check, the GitHub project link and
-*Run setup* — followed by Appearance, Activation, Pasting, Window, Capture, Measure, Retention,
-Limits, Utilities, Markdown, Sounds and Storage.
+*Run setup* — followed by Appearance, Activation, Pasting, Window, Screen Recording, Measure,
+Capture, Quick paste, Limits, Retention, Utilities, Markdown, Image editor, Sounds and Storage.
 
 The search box at the top of the settings page narrows the page to matching settings as you
 type. Name matches rank above description matches, and a section whose own heading matches keeps
@@ -524,6 +571,13 @@ A program path typed or pasted without its quotes is repaired rather than split 
 and a version that ends in `.exe` counts even when the file is not there, so a mistake is reported
 with the whole path. Leave the field empty and Kept never offers to edit anything, because
 there would be nothing to launch.
+
+**Detect KeptCraft** fills the field in for you. KeptCraft is the editor this app is built around,
+and nobody should have to know that it wants `open-annotate --filepath {file} --overwrite`. The
+button looks where its installer puts it — the `App Paths` registration first, then
+`Program Files\KeptCraft` and `%LOCALAPPDATA%\Programs\KeptCraft`, then `PATH` — and says so when
+there is nothing installed. The first-run wizard runs the same detection and offers to set it up,
+and Settings → About → *Setup wizard* reopens that offer at any time.
 
 The clip catches up with the editor on every save, not only when the editor closes. Kept notes
 the image file's size and timestamp before launching, then watches that file while the editor's
@@ -799,7 +853,9 @@ so the checklist only ever offers collections the clip is not in yet.
 
 - An **archive** keeps its clips out of All clips, Text, Images, Files, Pinned, tags and search
   results; selecting the archive itself is how you reach them. The search bar's **Archives**
-  toggle (or `in:archive`) reaches them from anywhere.
+  toggle (or `in:archive`) reaches them from anywhere. When a view comes up empty because the
+  only matches are archived, the empty state says so and offers **Include N archived items**,
+  which is the same toggle without leaving the list to find it.
 - Archived clips survive both *Clear history* variants and the retention limits, so an archive is
   a safe place for the things history should never eat.
 - Unarchiving the collection puts its clips straight back into the history views.
@@ -1253,6 +1309,7 @@ src-tauri/src/
   palette.rs                dominant-colour extraction for screenshot schemes
   giphy.rs                  GIPHY search, URL allow-listing and GIF downloads
   animated.rs               recovers the source GIF or video when a browser copies an image
+  autocomplete.rs           the `::` keyboard hook, trigger matching and the quick-paste window
   preview.rs                a link clip's page title and preview picture, on request
   picker.rs                 screen colour sampling, the eyedropper magnifier, input guards
   capture.rs                capture overlays, the window picker, scrolling capture and pixels
@@ -1283,6 +1340,12 @@ Kept makes a network request only when you ask it to, and says so each time:
 None of them carries your history, your clips or an identifier: each request is the address alone,
 over HTTPS, to a public host. Automatic link previews are the one path that runs without a click,
 and they are **off by default**.
+
+**Quick paste is the only part of Kept that looks at what you type elsewhere.** Its keyboard hook is
+installed only while *Settings → Quick paste* is switched on, it compares the last few characters
+against your trigger without keeping them, and it is unhooked the moment the setting goes off. It
+never runs over the applications listed under *Never there*, over Kept's own windows, or over a
+window belonging to a program running as administrator.
 
 ### The vault
 
@@ -1420,7 +1483,8 @@ and hours, archive protection from pruning and clear-history, color-code recogni
 detection (including the near-misses it must reject), Markdown note rendering with YAML escaping,
 CRLF normalisation and filename collisions, clips typed by hand, collection/tag behaviour,
 data-folder relocation and cleanup, theme sanitising, text recognition from a rendered
-image fixture, media path-traversal rejection, and the `DROPFILES` layout used for file lists.
+image fixture, media path-traversal rejection, the `DROPFILES` layout used for file lists, the
+quick-paste trigger and deny-list normalisation, and KeptCraft detection and its command line.
 
 Four tests are `#[ignore]`d: two because they touch the live system clipboard, and two because
 they need FFmpeg and a desktop on the machine — one records two seconds of the screen and checks the

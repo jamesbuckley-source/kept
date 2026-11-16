@@ -208,13 +208,23 @@ impl Default for Watcher {
     }
 }
 
+/// Answers whether `hash` is the write this app has just performed, and empties the
+/// latch when it is.
+fn swallow_own_write(suppress: &Arc<Mutex<Option<String>>>, hash: &str) -> bool {
+    let mut latch = suppress.lock();
+    if latch.as_deref() != Some(hash) {
+        return false;
+    }
+    *latch = None;
+    true
+}
+
 fn capture_once(
     app: &AppHandle,
     store: &Arc<Store>,
     suppress: &Arc<Mutex<Option<String>>>,
     settings: &Settings,
-) -> Result<()> {
-    // Attribute the clipboard to whatever was in front when the change landed.
+) -> Result<()> {    // Attribute the clipboard to whatever was in front when the change landed.
     let foreground = foreground_process_name();
 
     if let Some(name) = &foreground
@@ -238,9 +248,8 @@ fn capture_once(
     };
 
     let hash = hashing::of_content(&content);
-    if suppress.lock().as_deref() == Some(hash.as_str()) {
-        // This is the write we just performed; forget it and move on.
-        *suppress.lock() = None;
+    if swallow_own_write(suppress, &hash) {
+        // This is a write we just performed; nothing to record.
         return Ok(());
     }
 
@@ -551,13 +560,15 @@ pub fn write_flavoured(
     rtf: Option<&str>,
 ) -> Result<String> {
     match content {
-        // arboard owns its own clipboard session for images, so this path must not
-        // be nested inside `with_clipboard`.
+        // A picture keeps the same retrying clipboard session as everything else.
+        // arboard's own session gives up the first time another process is holding
+        // the clipboard open, which is what made images fail to paste while text
+        // from the same list pasted fine.
         ClipContent::Image {
             width,
             height,
             rgba,
-        } => write_image(*width, *height, rgba)?,
+        } => set_image(*width, *height, rgba)?,
         _ => {
             let outcome = with_clipboard(|| -> Result<()> {
                 unsafe { EmptyClipboard()? };
@@ -679,7 +690,7 @@ pub fn clear() -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
-use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL};
+use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL, HWND};
 #[cfg(windows)]
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
@@ -702,6 +713,9 @@ use windows::core::PWSTR;
 
 #[cfg(windows)]
 const CF_UNICODETEXT: u32 = 13;
+/// Device-independent bitmap: a header followed by the pixels.
+#[cfg(windows)]
+const CF_DIB: u32 = 8;
 /// `CF_HDROP`; defined locally because the windows crate nests it under Ole.
 #[cfg(windows)]
 const CF_HDROP: u32 = 15;
@@ -1114,27 +1128,78 @@ fn set_files(paths: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Serialises pixels into the `CF_DIB` payload a paste expects.
+///
+/// A `BITMAPINFOHEADER` with 32 bits per pixel and no compression, followed by the
+/// rows bottom-up — which is the opposite order from every other image API — with
+/// the channels swapped from the RGBA Kept stores to the BGRA the format wants.
+/// The alpha channel is kept: a screenshot with rounded corners pastes with them
+/// rather than on an opaque black rectangle.
 #[cfg(windows)]
-fn write_image(width: u32, height: u32, rgba: &[u8]) -> Result<()> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|e| AppError::Clipboard(e.to_string()))?;
-    clipboard
-        .set_image(arboard::ImageData {
-            width: width as usize,
-            height: height as usize,
-            bytes: std::borrow::Cow::Borrowed(rgba),
-        })
-        .map_err(|e| AppError::Clipboard(format!("could not set image: {e}")))
+fn build_dib(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>> {
+    let stride = width as usize * 4;
+    let expected = stride * height as usize;
+    if width == 0 || height == 0 || rgba.len() != expected {
+        return Err(AppError::Clipboard(format!(
+            "a {width}×{height} image should hold {expected} bytes, not {}",
+            rgba.len()
+        )));
+    }
+
+    let mut payload = Vec::with_capacity(40 + expected);
+    payload.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    payload.extend_from_slice(&(width as i32).to_le_bytes()); // biWidth
+    payload.extend_from_slice(&(height as i32).to_le_bytes()); // biHeight, bottom-up
+    payload.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    payload.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    payload.extend_from_slice(&0u32.to_le_bytes()); // biCompression, BI_RGB
+    payload.extend_from_slice(&(expected as u32).to_le_bytes()); // biSizeImage
+    payload.extend_from_slice(&[0u8; 16]); // pixels per metre, palette counts
+
+    for row in (0..height as usize).rev() {
+        let start = row * stride;
+        let line = &rgba[start..start + stride];
+        for pixel in line.chunks_exact(4) {
+            payload.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+        }
+    }
+    Ok(payload)
+}
+
+/// Puts a picture on the clipboard as a `CF_DIB`.
+#[cfg(windows)]
+fn set_image(width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+    let payload = build_dib(width, height, rgba)?;
+    let outcome = with_clipboard(|| -> Result<()> {
+        unsafe { EmptyClipboard()? };
+        unsafe { set_bytes(CF_DIB, &payload) }
+    });
+    match outcome {
+        Some(result) => result,
+        None => Err(AppError::Clipboard(
+            "another process is holding the clipboard open".into(),
+        )),
+    }
 }
 
 /// Process name (not full path) of the window that currently has focus.
 #[cfg(windows)]
 fn foreground_process_name() -> Option<String> {
+    let window = unsafe { GetForegroundWindow() };
+    if window.is_invalid() {
+        return None;
+    }
+    process_name_for(window.0 as isize)
+}
+
+/// Process name (not full path) of the window behind `handle`.
+///
+/// `None` when the owner cannot be queried at all, which is what a window belonging
+/// to a higher-integrity process looks like from here.
+#[cfg(windows)]
+pub(crate) fn process_name_for(handle: isize) -> Option<String> {
     unsafe {
-        let window = GetForegroundWindow();
-        if window.is_invalid() {
-            return None;
-        }
+        let window = HWND(handle as *mut core::ffi::c_void);
         let mut pid = 0u32;
         GetWindowThreadProcessId(window, Some(&mut pid));
         if pid == 0 {
@@ -1156,6 +1221,11 @@ fn foreground_process_name() -> Option<String> {
         let full = String::from_utf16_lossy(&buffer[..length as usize]);
         Some(leaf_name(&full))
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn process_name_for(_handle: isize) -> Option<String> {
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,6 +1270,37 @@ fn foreground_process_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_dib_is_bottom_up_and_channel_swapped() {        // 2×2: the top row is red then green, the bottom row blue then white.
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, // top
+            0, 0, 255, 255, 255, 255, 255, 255, // bottom
+        ];
+        let dib = build_dib(2, 2, &rgba).unwrap();
+
+        assert_eq!(u32::from_le_bytes(dib[0..4].try_into().unwrap()), 40);
+        assert_eq!(i32::from_le_bytes(dib[4..8].try_into().unwrap()), 2);
+        assert_eq!(i32::from_le_bytes(dib[8..12].try_into().unwrap()), 2);
+        assert_eq!(u16::from_le_bytes(dib[12..14].try_into().unwrap()), 1);
+        assert_eq!(u16::from_le_bytes(dib[14..16].try_into().unwrap()), 32);
+        assert_eq!(u32::from_le_bytes(dib[16..20].try_into().unwrap()), 0);
+        assert_eq!(dib.len(), 40 + 2 * 2 * 4);
+
+        // The rows are stored the other way up, and each pixel as BGRA.
+        assert_eq!(&dib[40..44], &[255, 0, 0, 255], "bottom-left is blue");
+        assert_eq!(&dib[44..48], &[255, 255, 255, 255], "bottom-right is white");
+        assert_eq!(&dib[48..52], &[0, 0, 255, 255], "top-left is red");
+        assert_eq!(&dib[52..56], &[0, 255, 0, 255], "top-right is green");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_dib_refuses_a_payload_that_does_not_fit_its_size() {
+        assert!(build_dib(2, 2, &[0, 0, 0, 0]).is_err());
+        assert!(build_dib(0, 4, &[]).is_err());
+    }
 
     #[test]
     fn text_preview_is_collapsed_and_truncated() {

@@ -1,7 +1,7 @@
 import { clipAction, type ClipAction } from "../lib/actions";
 import { formatRelative, clipBadgeClass, clipImageUrl, clipLabel, clipMotionUrl } from "../lib/format";
 import { mediaUrl } from "../lib/ipc";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import type { ClipSummary } from "../lib/types";
 import { ClipActionButton } from "./ClipActionButton";
@@ -21,6 +21,8 @@ interface ClipGridProps {
   selectedIds: number[];
   loading: boolean;
   emptyMessage: string;
+  /** Extra control under the message, such as a way to include archived clips. */
+  emptyAction?: ReactNode;
   now: number;
   /** Card size multiplier; 1 is the designed size. */
   scale: number;
@@ -383,6 +385,7 @@ export function ClipGrid({
   selectedIds,
   loading,
   emptyMessage,
+  emptyAction,
   now,
   scale,
   tagColors,
@@ -406,6 +409,7 @@ export function ClipGrid({
       <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
         <IconImage className="size-6 text-edge" />
         <p className="text-[12px] text-ink-dim">{emptyMessage}</p>
+        {emptyAction}
       </div>
     );
   }

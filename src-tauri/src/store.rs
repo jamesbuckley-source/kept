@@ -814,7 +814,11 @@ impl Store {
         // stable in both directions.
         let order = state.settings.sort_order.as_str();
         matched.sort_by(|a, b| {
-            let pinned = b.0.summary.pinned.cmp(&a.0.summary.pinned);
+            let pinned = if filter.recency_first {
+                std::cmp::Ordering::Equal
+            } else {
+                b.0.summary.pinned.cmp(&a.0.summary.pinned)
+            };
             if pinned != std::cmp::Ordering::Equal {
                 return pinned;
             }
@@ -4362,8 +4366,43 @@ mod tests {
     }
 
     #[test]
-    fn text_content_round_trips() {
+    fn recency_first_drops_the_pinned_rule_but_keeps_it_otherwise() {
         let (store, _dir) = test_store();
+        let pinned = match store
+            .insert_clip(unique_text_clip("older pinned note"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            _ => panic!("expected insert"),
+        };
+        store.set_pinned(pinned, true).unwrap();
+        let newer = match store
+            .insert_clip(unique_text_clip("newer plain note"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            _ => panic!("expected insert"),
+        };
+
+        // The history wants a pinned clip first, whatever its age.
+        let history = store.list(&ClipFilter::default(), "", 10, 0);
+        assert_eq!(history.items[0].id, pinned);
+
+        // The `::` popup wants the clip that was copied a moment ago.
+        let popup = store.list(
+            &ClipFilter {
+                recency_first: true,
+                ..Default::default()
+            },
+            "",
+            10,
+            0,
+        );
+        assert_eq!(popup.items[0].id, newer);
+    }
+
+    #[test]
+    fn text_content_round_trips() {        let (store, _dir) = test_store();
         let id = match store.insert_clip(unique_text_clip("secret body")).unwrap() {
             InsertOutcome::Inserted(id) => id,
             _ => panic!("expected insert"),

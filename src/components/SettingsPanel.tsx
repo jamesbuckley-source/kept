@@ -19,6 +19,7 @@ import { formatBytes, formatCount, formatRelative } from "../lib/format";
 import {
   errorMessage,
   copyText,
+  detectKeptCraft,
   installFfmpeg,
   recordToolchain,
   revealErrorLog,
@@ -914,6 +915,8 @@ function fileName(path: string): string {
 const EDITOR_PRESETS: { match: RegExp; args: string }[] = [
   // ShotCraft opens the annotation editor only when asked.
   { match: /(^|[\\/])shotcraft\.exe$/i, args: "open-annotate --filepath {file}" },
+  // KeptCraft is the same shape, and saves over the file so the edit lands in Kept.
+  { match: /(^|[\\/])keptcraft\.exe$/i, args: "open-annotate --filepath {file} --overwrite" },
 ];
 
 /**
@@ -973,6 +976,7 @@ export function SettingsPanel({
   const [storageError, setStorageError] = useState<string | null>(null);
   const [markdownError, setMarkdownError] = useState<string | null>(null);
   const [imageEditorError, setImageEditorError] = useState<string | null>(null);
+  const [detectingEditor, setDetectingEditor] = useState(false);
   // Decided on blur, not on every keystroke: half-typed commands are not saved.
   const [editorDraft, setEditorDraft] = useState(settings?.imageEditor ?? "");
   // Empty on mount, so every section starts collapsed each time settings opens.
@@ -1137,6 +1141,27 @@ export function SettingsPanel({
     if (trimmed === settings?.imageEditor) return;
     setImageEditorError(null);
     void onPatch({ imageEditor: trimmed });
+  };
+
+  /** Finds KeptCraft and adopts it, because nobody should have to type its flags. */
+  const detectKeptCraftEditor = async () => {
+    setDetectingEditor(true);
+    setImageEditorError(null);
+    try {
+      const command = await detectKeptCraft();
+      if (!command) {
+        setImageEditorError(
+          "KeptCraft is not installed on this machine. Install it, then detect it again — or use Choose… for another editor.",
+        );
+        return;
+      }
+      setEditorDraft(command);
+      await onPatch({ imageEditor: command });
+    } catch (e) {
+      setImageEditorError(errorMessage(e));
+    } finally {
+      setDetectingEditor(false);
+    }
   };
 
   const runMove = async (target: string) => {
@@ -2310,6 +2335,82 @@ export function SettingsPanel({
             />
           </Section>
 
+          <Section title="Quick paste">
+            <Row
+              label="Type :: anywhere to search Kept"
+              hint="Watches what you type in other applications and opens a small search box on the double colon. Kept never records what it sees; the two characters are removed from the document before the box opens. Off by default."
+              control={
+                <Toggle
+                  label="Type :: anywhere to search Kept"
+                  checked={settings.quickPasteEnabled}
+                  onChange={(next) => void onPatch({ quickPasteEnabled: next })}
+                />
+              }
+            />
+            <Row
+              label="Trigger"
+              hint="The characters that open the box. Up to six, with no spaces."
+              control={
+                <input
+                  type="text"
+                  value={settings.quickPasteToken}
+                  onChange={(event) => void onPatch({ quickPasteToken: event.target.value })}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  spellCheck={false}
+                  maxLength={6}
+                  aria-label="Quick paste trigger"
+                  placeholder="::"
+                  className="w-20 rounded border border-edge bg-panel-2 px-2 py-1 font-mono text-[11px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
+                />
+              }
+            />
+            <Row
+              label="Offer text clips"
+              hint="The clip copied a moment ago, then your recent history as you press Down, and a search as you type."
+              control={
+                <Toggle
+                  label="Offer text clips"
+                  checked={settings.quickPasteText}
+                  onChange={(next) => void onPatch({ quickPasteText: next })}
+                />
+              }
+            />
+            <Row
+              label="Offer emoji"
+              hint="Typing two characters also matches emoji by name."
+              control={
+                <Toggle
+                  label="Offer emoji"
+                  checked={settings.quickPasteEmoji}
+                  onChange={(next) => void onPatch({ quickPasteEmoji: next })}
+                />
+              }
+            />
+            <Row
+              label="Never open here"
+              hint="One process name per line. Typing the trigger in these apps does nothing at all — the characters are left in the document. Password managers and terminals start here."
+              control={
+                <textarea
+                  value={settings.quickPasteDeniedApps.join("\n")}
+                  onChange={(event) =>
+                    void onPatch({
+                      quickPasteDeniedApps: event.target.value
+                        .split("\n")
+                        .map((line) => line.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  onKeyDown={(event) => event.stopPropagation()}
+                  rows={4}
+                  spellCheck={false}
+                  aria-label="Applications without quick paste"
+                  placeholder={"keepassxc.exe\nwindowsterminal.exe"}
+                  className="w-44 resize-none rounded border border-edge bg-panel-2 px-2 py-1 font-mono text-[10px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
+                />
+              }
+            />
+          </Section>
+
           <Section title="Limits">
             <Row
               label="Largest text clip"
@@ -2421,7 +2522,7 @@ export function SettingsPanel({
 
           <Section
             title="Image editor"
-            hint="Where image clips open from their Edit button. Any program that takes a file path works, such as Paint, IrfanView or ShotCraft. ShotCraft saves into its own folder instead of over the file it was given, and the newest image there is adopted as the edit."
+            hint="Where image clips open from their Edit button. KeptCraft is the one Kept is built around: Detect KeptCraft fills this in for you. Any program that takes a file path works, such as Paint, IrfanView or ShotCraft. ShotCraft saves into its own folder instead of over the file it was given, and the newest image there is adopted as the edit."
           >
             <StackedRow
               label="Command"
@@ -2444,6 +2545,15 @@ export function SettingsPanel({
                 />
                 <button
                   type="button"
+                  onClick={() => void detectKeptCraftEditor()}
+                  disabled={detectingEditor}
+                  title="Find an installed KeptCraft and use it for image edits"
+                  className="shrink-0 rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
+                >
+                  {detectingEditor ? "Detecting…" : "Detect KeptCraft"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => void chooseImageEditor()}
                   className="shrink-0 rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink"
                 >
@@ -2460,13 +2570,18 @@ export function SettingsPanel({
                 )}
               </div>
               <p className="mt-1.5 text-[10px] leading-relaxed text-ink-faint">
-                ShotCraft opens the annotation editor only when asked, so it needs{" "}
+                <span className="text-ink-dim">Detect KeptCraft</span> looks for it in the
+                Program Files folder it installs into, its App Paths registration and{" "}
+                <code className="rounded bg-panel-2 px-1">PATH</code>, then fills the command in
+                with the arguments it needs. ShotCraft opens the annotation editor only when
+                asked, so it needs{" "}
                 <code className="rounded bg-panel-2 px-1">
                   open-annotate --filepath {`{file}`}
                 </code>{" "}
                 after the program. Picking <code className="rounded bg-panel-2 px-1">shotcraft.exe</code>{" "}
-                fills that in for you, and plain <code className="rounded bg-panel-2 px-1">mspaint.exe</code>{" "}
-                needs nothing.
+                or <code className="rounded bg-panel-2 px-1">keptcraft.exe</code> fills that in for
+                you, and plain <code className="rounded bg-panel-2 px-1">mspaint.exe</code> needs
+                nothing.
               </p>
             </StackedRow>
             {imageEditorError && (

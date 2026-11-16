@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-import { errorMessage, validateHotkey } from "../lib/ipc";
+import { errorMessage, detectKeptCraft, validateHotkey } from "../lib/ipc";
 import type { Settings, ThemeMode } from "../lib/types";
 import { CaptureModeField } from "./CaptureModeField";
 import { HotkeyField, Row, Toggle } from "./SettingsPanel";
@@ -14,15 +14,31 @@ const PASSWORD_MANAGERS = [
   "dashlane.exe",
 ];
 
-type Retention = "500" | "2000" | "30d" | "90d" | "forever";
+type Retention =
+  | "500"
+  | "2000"
+  | "1d"
+  | "30d"
+  | "90d"
+  | "forever"
+  | "custom-clips"
+  | "custom-days";
 type SecretMode = "flag" | "skip" | "off";
 
+/** The presets that need no number typed in; the two custom kinds do. */
+type FixedRetention = Exclude<Retention, "custom-clips" | "custom-days">;
+
+/** Mirrors the backend's caps, so a typed number is never silently reduced. */
+const MAX_CLIPS = 100_000;
+const MAX_DAYS = 3_650;
+
 const RETENTION_PATCH: Record<
-  Retention,
+  FixedRetention,
   Pick<Settings, "maxItems" | "maxAgeDays" | "maxAgeHours">
 > = {
   "500": { maxItems: 500, maxAgeDays: 0, maxAgeHours: 0 },
   "2000": { maxItems: 2000, maxAgeDays: 0, maxAgeHours: 0 },
+  "1d": { maxItems: 0, maxAgeDays: 1, maxAgeHours: 0 },
   "30d": { maxItems: 0, maxAgeDays: 30, maxAgeHours: 0 },
   "90d": { maxItems: 0, maxAgeDays: 90, maxAgeHours: 0 },
   forever: { maxItems: 0, maxAgeDays: 0, maxAgeHours: 0 },
@@ -31,9 +47,12 @@ const RETENTION_PATCH: Record<
 const RETENTION_LABELS: { value: Retention; label: string }[] = [
   { value: "500", label: "500 clips" },
   { value: "2000", label: "2,000 clips" },
+  { value: "1d", label: "1 day" },
   { value: "30d", label: "30 days" },
   { value: "90d", label: "90 days" },
   { value: "forever", label: "Forever" },
+  { value: "custom-clips", label: "Custom clips" },
+  { value: "custom-days", label: "Custom days" },
 ];
 
 /** Secret expiry, in minutes; 0 is "never", which is the default. */
@@ -64,14 +83,27 @@ const SECRET_OPTIONS: { value: SecretMode; label: string; hint: string }[] = [
 ];
 
 function initialRetention(settings: Settings): Retention {
+  if (settings.maxAgeDays === 1) return "1d";
   if (settings.maxAgeDays === 30) return "30d";
   if (settings.maxAgeDays === 90) return "90d";
   if (settings.maxAgeDays === 0 && settings.maxAgeHours === 0) {
     if (settings.maxItems === 500) return "500";
     if (settings.maxItems === 2000) return "2000";
     if (settings.maxItems === 0) return "forever";
+    return "custom-clips";
   }
-  return "2000";
+  return "custom-days";
+}
+
+/** A custom limit's starting point: what is stored, or a round number to edit. */
+function initialCustomClips(settings: Settings): string {
+  return String(settings.maxItems > 0 ? settings.maxItems : 1000);
+}
+
+function initialCustomDays(settings: Settings): string {
+  if (settings.maxAgeDays > 0) return String(settings.maxAgeDays);
+  if (settings.maxAgeHours > 0) return String(Math.max(1, Math.round(settings.maxAgeHours / 24)));
+  return "7";
 }
 
 function initialSecretMode(settings: Settings): SecretMode {
@@ -93,7 +125,7 @@ interface FirstRunWizardProps {
   firstRun: boolean;
   onApply: (delta: Partial<Settings>) => Promise<Settings>;
   onClose: () => void;
-  /** Saves the choices, closes the wizard and focuses the search box. */
+  /** Saves the choices and closes the wizard. */
   onFinish: () => void;
 }
 
@@ -156,18 +188,47 @@ export function FirstRunWizard({
   const [ignoreManagers, setIgnoreManagers] = useState(
     firstRun ? true : ignoresPasswordManagers(settings),
   );
+  // Left as the setting says, so a first run does not switch on a system-wide
+  // keyboard hook behind the user's back: the wizard offers it, it does not assume.
+  const [quickPaste, setQuickPaste] = useState(settings.quickPasteEnabled);
   const [secretMode, setSecretMode] = useState<SecretMode>(initialSecretMode(settings));
   const [secretExpiry, setSecretExpiry] = useState(settings.secretMaxAgeMins);
   const [retention, setRetention] = useState<Retention>(initialRetention(settings));
+  const [customClips, setCustomClips] = useState(() => initialCustomClips(settings));
+  const [customDays, setCustomDays] = useState(() => initialCustomDays(settings));
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode(settings));
   const [copySound, setCopySound] = useState(settings.copySound);
   const [failureSound, setFailureSound] = useState(settings.copyFailSound);
+  /**
+   * The command line KeptCraft was found at, or null when it is not installed.
+   * Detection is a filesystem probe on the backend, so it runs once when the
+   * wizard opens rather than on every step.
+   */
+  const [keptCraft, setKeptCraft] = useState<string | null>(null);
+  const [useKeptCraft, setUseKeptCraft] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    detectKeptCraft()
+      .then((command) => {
+        if (cancelled || !command) return;
+        setKeptCraft(command);
+        // An editor the user has already chosen is left alone; an empty slot is
+        // what this offer exists for.
+        setUseKeptCraft(settings.imageEditor.trim() === "");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately once: the answer cannot change while the wizard is open.
+  }, []);
 
   const initialTheme = initialThemeMode(settings);
   // Re-running the wizard must not normalise choices the user made in Settings:
   // only fields the user actually touched are written back.
   const initialCapture = settings.captureImages || settings.captureFiles;
   const initialIgnore = firstRun ? true : ignoresPasswordManagers(settings);
+  const initialQuickPaste = settings.quickPasteEnabled;
   const initialRetentionValue = initialRetention(settings);
 
   const skip = async () => {
@@ -238,6 +299,22 @@ export function FirstRunWizard({
   };
 
   const finish = async () => {
+    const clipsWanted = Number(customClips);
+    const daysWanted = Number(customDays);
+    if (
+      retention === "custom-clips" &&
+      !(Number.isInteger(clipsWanted) && clipsWanted >= 1 && clipsWanted <= MAX_CLIPS)
+    ) {
+      setError(`A custom clip limit must be a whole number from 1 to ${MAX_CLIPS}.`);
+      return;
+    }
+    if (
+      retention === "custom-days" &&
+      !(Number.isInteger(daysWanted) && daysWanted >= 1 && daysWanted <= MAX_DAYS)
+    ) {
+      setError(`A custom number of days must be a whole number from 1 to ${MAX_DAYS}.`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -262,13 +339,32 @@ export function FirstRunWizard({
           : settings.ignoredApps.filter((app) => !PASSWORD_MANAGERS.includes(app));
       }
 
+      if (firstRun || quickPaste !== initialQuickPaste) {
+        delta.quickPasteEnabled = quickPaste;
+      }
+
       if (firstRun || retention !== initialRetentionValue) {
-        Object.assign(delta, RETENTION_PATCH[retention]);
+        if (retention === "custom-clips") {
+          delta.maxItems = clipsWanted;
+          delta.maxAgeDays = 0;
+          delta.maxAgeHours = 0;
+        } else if (retention === "custom-days") {
+          delta.maxItems = 0;
+          delta.maxAgeDays = daysWanted;
+          delta.maxAgeHours = 0;
+        } else {
+          Object.assign(delta, RETENTION_PATCH[retention]);
+        }
       }
 
       // Leave a custom palette alone when the wizard is only being re-run.
       if (firstRun || themeMode !== initialTheme) {
         delta.theme = { ...settings.theme, mode: themeMode };
+      }
+
+      // An editor already configured is never replaced by the offer above.
+      if (useKeptCraft && keptCraft && settings.imageEditor !== keptCraft) {
+        delta.imageEditor = keptCraft;
       }
 
       await onApply(delta);
@@ -282,12 +378,12 @@ export function FirstRunWizard({
   const steps = ["Activation", "Paste & privacy", "Look & finish"];
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-canvas/80 p-6 animate-fade-in">
+    <div className="flex h-screen w-screen bg-panel">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="setup-title"
-        className="flex w-full max-w-[480px] flex-col overflow-hidden rounded-panel border border-edge bg-panel shadow-xl animate-rise"
+        className="flex min-h-0 w-full flex-col bg-panel"
       >
         <div className="flex items-center gap-2 border-b border-edge-soft px-5 py-3">
           <div className="min-w-0 flex-1">
@@ -321,7 +417,7 @@ export function FirstRunWizard({
           ))}
         </div>
 
-        <div className="min-h-[240px] px-5 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
           {error && (
             <p role="alert" className="mb-3 rounded border border-danger/40 bg-danger/10 px-2 py-1.5 text-[11px] text-danger">
               {error}
@@ -425,6 +521,17 @@ export function FirstRunWizard({
                   />
                 }
               />
+              <Row
+                label="Type :: anywhere to search Kept"
+                hint="Opens a small Kept search box while you write in another application. It watches what you type with a keyboard hook that compares your last few characters and keeps nothing; password managers and terminals are left out. Off by default."
+                control={
+                  <Toggle
+                    label="Type :: anywhere to search Kept"
+                    checked={quickPaste}
+                    onChange={setQuickPaste}
+                  />
+                }
+              />
 
               <div className="py-2">
                 <p className="text-[12px] text-ink-dim">Likely secrets</p>
@@ -482,13 +589,46 @@ export function FirstRunWizard({
                     </OptionButton>
                   ))}
                 </div>
+                {retention === "custom-clips" && (
+                  <label className="mt-1.5 flex items-center gap-1.5 text-[10px] text-ink-faint">
+                    Keep the newest
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_CLIPS}
+                      value={customClips}
+                      onChange={(event) => setCustomClips(event.target.value)}
+                      aria-label="Custom clip limit"
+                      className="w-24 rounded border border-edge bg-panel-2 px-2 py-1 text-[11px] text-ink focus:border-accent-dim focus:outline-none"
+                    />
+                    clips
+                  </label>
+                )}
+                {retention === "custom-days" && (
+                  <label className="mt-1.5 flex items-center gap-1.5 text-[10px] text-ink-faint">
+                    Forget clips after
+                    <input
+                      type="number"
+                      min={1}
+                      max={MAX_DAYS}
+                      value={customDays}
+                      onChange={(event) => setCustomDays(event.target.value)}
+                      aria-label="Custom retention in days"
+                      className="w-24 rounded border border-edge bg-panel-2 px-2 py-1 text-[11px] text-ink focus:border-accent-dim focus:outline-none"
+                    />
+                    days
+                  </label>
+                )}
               </div>
             </>
           )}
 
           {step === 2 && (
             <>
-              <StepTitle title="Look & finish" hint="A theme and two sounds, then you are done." />
+              <StepTitle
+                title="Look & finish"
+                hint="A theme, two sounds and the image editor, then you are done."
+              />
               <Row
                 label="Theme"
                 hint="Custom colors stay available in Settings → Appearance."
@@ -530,6 +670,19 @@ export function FirstRunWizard({
                   />
                 }
               />
+              {keptCraft && (
+                <Row
+                  label="Edit images in KeptCraft"
+                  hint="KeptCraft is installed. The Edit buttons on image clips will open it, saving the edit back over the clip."
+                  control={
+                    <Toggle
+                      label="Edit images in KeptCraft"
+                      checked={useKeptCraft}
+                      onChange={setUseKeptCraft}
+                    />
+                  }
+                />
+              )}
               <p className="mt-3 rounded border border-edge-soft bg-panel-2 px-2.5 py-2 text-[10px] leading-relaxed text-ink-faint">
                 You can reopen this wizard any time from Settings → About → Setup wizard.
               </p>

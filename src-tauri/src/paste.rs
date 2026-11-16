@@ -194,9 +194,94 @@ pub fn send_paste() -> Result<()> {
     Ok(())
 }
 
+/// Types `count` backspaces into the foreground window.
+///
+/// The `::` popup's trigger is not filtered out of the keystroke stream — both
+/// characters land in the application being typed into — so it is taken back out
+/// with the editing key. Virtual-key presses are enough here: unlike Ctrl+V this
+/// has to work in the same window the user is already typing in.
 #[cfg(windows)]
-fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {
-    // Supplying the scan code as well as the virtual key keeps the synthetic input
+pub fn send_backspaces(count: usize) -> Result<()> {
+    const VK_BACK: u16 = 0x08;
+
+    let count = count.clamp(1, 8);
+    let mut inputs = Vec::with_capacity(count * 2);
+    for _ in 0..count {
+        inputs.push(key_input(VIRTUAL_KEY(VK_BACK), false));
+        inputs.push(key_input(VIRTUAL_KEY(VK_BACK), true));
+    }
+
+    // SAFETY: `inputs` is a valid, correctly sized slice of INPUT structures.
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        return Err(AppError::msg(format!(
+            "only {sent} of {} input events were accepted; \
+             a window with higher integrity may be in the foreground",
+            inputs.len()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn send_backspaces(_count: usize) -> Result<()> {
+    Err(AppError::msg(
+        "removing the trigger token is only implemented on Windows",
+    ))
+}
+
+/// Brings one of our own windows to the front, past the foreground lock.
+///
+/// The `::` popup opens while another application is in front, and Windows only
+/// honours `SetForegroundWindow` for the process that owns the foreground. The
+/// hook merely observed the keystroke that asked for the popup — it was never given
+/// the input — so the window otherwise appears without the keyboard, which leaves
+/// Escape and every click with the application behind it. Attaching to the
+/// foreground thread's queue for the length of the call is the documented way
+/// around that restriction.
+#[cfg(windows)]
+pub fn take_foreground(handle: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    };
+
+    let window = HWND(handle as *mut core::ffi::c_void);
+    // SAFETY: every call below only reads or adjusts windows that exist, and
+    // IsWindow guards against one that has been closed in the meantime.
+    unsafe {
+        if !IsWindow(Some(window)).as_bool() {
+            return false;
+        }
+        if SetForegroundWindow(window).as_bool() {
+            return true;
+        }
+        let foreground = GetForegroundWindow();
+        if foreground.is_invalid() {
+            return false;
+        }
+        let theirs = GetWindowThreadProcessId(foreground, None);
+        let ours = GetCurrentThreadId();
+        if theirs == 0 || theirs == ours {
+            return false;
+        }
+        let attached = AttachThreadInput(ours, theirs, true).as_bool();
+        let taken = SetForegroundWindow(window).as_bool();
+        if attached {
+            let _ = AttachThreadInput(ours, theirs, false);
+        }
+        taken
+    }
+}
+
+#[cfg(not(windows))]
+pub fn take_foreground(_handle: isize) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {    // Supplying the scan code as well as the virtual key keeps the synthetic input
     // working in applications that read hardware scan codes directly (games, some
     // terminals and remote-desktop clients), which ignore VK-only events.
     // SAFETY: MapVirtualKeyW is a pure lookup for a valid virtual key.

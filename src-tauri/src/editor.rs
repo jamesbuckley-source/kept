@@ -43,6 +43,104 @@ pub fn program_of(editor: &str) -> Option<PathBuf> {
     split_editor_command(editor).first().map(PathBuf::from)
 }
 
+/// The name KeptCraft's installer gives its program.
+const KEPTCRAFT_EXE: &str = "keptcraft.exe";
+
+/// The command line that opens `file` in KeptCraft's annotation editor, in the
+/// form Kept's setting holds.
+///
+/// KeptCraft is the editor this app is built around: it saves over the file it was
+/// given, so the edit lands where Kept already looks for it.
+pub fn keptcraft_command(exe: &Path) -> String {
+    let program = exe.display().to_string();
+    let program = if program.contains(' ') {
+        format!("\"{program}\"")
+    } else {
+        program
+    };
+    format!("{program} open-annotate --filepath {FILE_PLACEHOLDER} --overwrite")
+}
+
+/// Finds an installed KeptCraft.
+///
+/// Three places, in the order that costs least: the App Paths registration its
+/// installer writes, the folder that installer uses, and finally `PATH`. Updates
+/// replace the program in place, so a hit keeps being a hit.
+pub fn detect_keptcraft() -> Option<PathBuf> {
+    app_paths_keptcraft()
+        .or_else(|| install_folders().into_iter().find(|path| path.is_file()))
+        .or_else(|| on_path(KEPTCRAFT_EXE))
+}
+
+/// The folders KeptCraft's installer and its per-user sibling install into.
+fn install_folders() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(PathBuf::from))
+        .collect();
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("Programs"));
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join("KeptCraft").join(KEPTCRAFT_EXE))
+        .collect()
+}
+
+/// Looks `program` up in `PATH`, which is where a portable copy lives.
+fn on_path(program: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+}
+
+/// Reads the `App Paths` entry installers write so the program can be found by
+/// name, whatever folder it went into.
+#[cfg(windows)]
+fn app_paths_keptcraft() -> Option<PathBuf> {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
+    };
+    use windows::core::PCWSTR;
+
+    const APP_PATHS: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\keptcraft.exe";
+
+    fn read_default(root: HKEY) -> Option<PathBuf> {
+        let key: Vec<u16> = APP_PATHS.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut buffer = [0u16; 1024];
+        let mut bytes = (buffer.len() * std::mem::size_of::<u16>()) as u32;
+        // SAFETY: the key path is NUL-terminated and outlives the call, and the
+        // buffer is exactly the size the API is told it has.
+        let status = unsafe {
+            RegGetValueW(
+                root,
+                PCWSTR(key.as_ptr()),
+                PCWSTR::null(),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buffer.as_mut_ptr().cast()),
+                Some(&mut bytes),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return None;
+        }
+        // The count is the size written, including the terminating NUL.
+        let len = ((bytes as usize) / 2).saturating_sub(1).min(buffer.len());
+        let text = String::from_utf16_lossy(&buffer[..len]);
+        let path = PathBuf::from(text.trim().trim_matches('"'));
+        path.is_file().then_some(path)
+    }
+
+    read_default(HKEY_LOCAL_MACHINE).or_else(|| read_default(HKEY_CURRENT_USER))
+}
+
+#[cfg(not(windows))]
+fn app_paths_keptcraft() -> Option<PathBuf> {
+    None
+}
+
 /// The folder an editor exports into instead of saving over the file it opened.
 ///
 /// ShotCraft never writes back to `{file}`: its Save exports a new, timestamped
@@ -304,5 +402,48 @@ mod tests {
     fn a_program_on_the_path_is_not_glued_to_its_arguments() {
         let parts = split_editor_command(r"mspaint.exe C:\shots\one.png");
         assert_eq!(parts, ["mspaint.exe", r"C:\shots\one.png"]);
+    }
+
+    #[test]
+    fn the_keptcraft_command_is_quoted_and_carries_its_flags() {
+        let command = keptcraft_command(Path::new(r"C:\Program Files\KeptCraft\keptcraft.exe"));
+        assert_eq!(
+            command,
+            r#""C:\Program Files\KeptCraft\keptcraft.exe" open-annotate --filepath {file} --overwrite"#
+        );
+        // A path without a space is stored as it is, so the field reads cleanly.
+        assert_eq!(
+            keptcraft_command(Path::new(r"C:\Tools\keptcraft.exe")),
+            r"C:\Tools\keptcraft.exe open-annotate --filepath {file} --overwrite"
+        );
+    }
+
+    #[test]
+    fn the_keptcraft_command_places_the_file_it_is_given() {
+        let editor = keptcraft_command(Path::new(r"C:\Tools\keptcraft.exe"));
+        let command = command_for(&editor, Path::new(r"C:\my shots\one.png")).unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args, ["open-annotate", "--filepath", r"C:\my shots\one.png", "--overwrite"]);
+    }
+
+    #[test]
+    fn the_installed_keptcraft_folders_are_the_ones_its_installer_uses() {
+        let folders = install_folders();
+        assert!(folders.iter().all(|path| path.ends_with(r"KeptCraft\keptcraft.exe")));
+        assert!(!folders.is_empty(), "at least the Program Files location is probed");
+    }
+
+    #[test]
+    fn detection_answers_with_a_program_that_exists() {
+        match detect_keptcraft() {
+            Some(path) => assert!(path.is_file() && path.ends_with(KEPTCRAFT_EXE)),
+            None => assert!(
+                !Path::new(r"C:\Program Files\KeptCraft\keptcraft.exe").is_file(),
+                "a copy in the installer's folder must be found"
+            ),
+        }
     }
 }

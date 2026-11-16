@@ -22,8 +22,8 @@ use crate::hashing;
 use crate::markdown::MarkdownExport;
 use crate::media;
 use crate::models::{
-    ClipContent, ClipDetail, ClipFilter, ClipKind, ClipPage, Collection, NewClip, RichText,
-    SplitOutcome, StackEntry, Stats, Tag,
+    ClipContent, ClipDetail, ClipFilter, ClipKind, ClipPage, Collection, NewClip, QuickItem,
+    RichText, SplitOutcome, StackEntry, Stats, Tag,
 };
 use crate::paste;
 use crate::picker;
@@ -670,41 +670,8 @@ fn copy_clip_inner(
     auto_paste: Option<bool>,
     hide_window: Option<bool>,
 ) -> Result<()> {
-    let store = Arc::clone(&state.store);
-    let settings = store.settings();
-    let content = content_for(&store, id)?;
-    // Styled copies are pasted back as they were copied; the plain text is always
-    // on the clipboard too, so a rich-unaware target still gets something.
-    let rich = if settings.paste_rich_text && content.kind() == ClipKind::Text {
-        store.rich_text(id).unwrap_or_default()
-    } else {
-        Default::default()
-    };
-
-    // A clip with a recovered GIF or video is published as a file so media-aware
-    // targets keep every frame; everything else keeps the normal clipboard shape.
-    // This covers a pasted movie address too, which is now a movie clip.
-    let motion_path = store.motion_path(id);
-    let hash = match motion_path {
-        // A movie that came from a link publishes that link as well: a file drop is
-        // refused by plenty of targets, and without the text they pasted nothing.
-        Some(path) if store.is_video_clip(id) => match &content {
-            ClipContent::Text(link) if !link.trim().is_empty() => {
-                clipboard::write_file_and_text(&path, link.trim())?
-            }
-            _ => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
-        },
-        Some(path) => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
-        None => {
-            clipboard::write_flavoured(&content, rich.html.as_deref(), rich.rtf.as_deref())?
-        }
-    };
-    let sequence = clipboard::sequence_number();
-    // Arm the latch *before* recording the copy: the watcher polls on a timer and
-    // could otherwise observe our own write and reshuffle the list.
-    state.watcher.suppress_hash(hash);
-    store.record_copy(id)?;
-    let _ = app.emit(EVENT_HISTORY_CHANGED, ());
+    let settings = state.store.settings();
+    let sequence = publish_clip(app, state, id)?;
 
     // Copying from a hover button leaves the window up so the user can keep
     // browsing; only an activation (Enter, double click) dismisses it.
@@ -734,6 +701,238 @@ fn copy_clip_inner(
         }
     }
     Ok(())
+}
+
+/// Writes a stored clip to the clipboard and records the reuse.
+///
+/// Every path that puts a clip on the clipboard goes through here, so the rich
+/// text, GIF and video shapes stay the same whichever window asked: the history
+/// overlay, the `::` popup and the paste stack.
+///
+/// Answers with the clipboard sequence number, which the auto-clear timer uses to
+/// tell whether the payload is still ours.
+fn publish_clip(app: &AppHandle, state: &AppState, id: i64) -> Result<u32> {
+    let store = Arc::clone(&state.store);
+    let settings = store.settings();
+    let content = content_for(&store, id)?;
+    // Styled copies are pasted back as they were copied; the plain text is always
+    // on the clipboard too, so a rich-unaware target still gets something.
+    let rich = if settings.paste_rich_text && content.kind() == ClipKind::Text {
+        store.rich_text(id).unwrap_or_default()
+    } else {
+        Default::default()
+    };
+
+    // A clip with a recovered GIF or video is published as a file so media-aware
+    // targets keep every frame; everything else keeps the normal clipboard shape.
+    // This covers a pasted movie address too, which is now a movie clip.
+    let motion_path = store.motion_path(id);
+    // A picture keeps the same retrying clipboard session as everything else.
+    let hash = match motion_path {
+        // A movie that came from a link publishes that link as well: a file drop is
+        // refused by plenty of targets, and without the text they pasted nothing.
+        Some(path) if store.is_video_clip(id) => match &content {
+            ClipContent::Text(link) if !link.trim().is_empty() => {
+                clipboard::write_file_and_text(&path, link.trim())?
+            }
+            _ => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
+        },
+        Some(path) => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
+        None => clipboard::write_flavoured(&content, rich.html.as_deref(), rich.rtf.as_deref())?,
+    };
+    let sequence = clipboard::sequence_number();
+    // Arm the latch *before* recording the copy: the watcher polls on a timer and
+    // could otherwise observe our own write and reshuffle the list.
+    state.watcher.suppress_hash(hash);
+    store.record_copy(id)?;
+    let _ = app.emit(EVENT_HISTORY_CHANGED, ());
+    Ok(sequence)
+}
+
+/// The rows the `::` popup shows for whatever has been typed into it.
+///
+/// One query serves both halves of the popup: with nothing typed it answers the
+/// most recently used clips, which is what it opens on, and from two characters up
+/// it answers a search. Emoji are added by the interface, where the emoji names
+/// live; nothing here knows about them.
+#[tauri::command]
+pub fn quick_items(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    limit: Option<usize>,
+) -> Vec<QuickItem> {
+    let settings = state.store.settings();
+    let limit = limit.unwrap_or(10).clamp(1, 20);
+    let query = query.unwrap_or_default();
+    let query = query.trim();
+    // A single character matches too much to be a useful answer, so the recents
+    // stay on screen until there are two.
+    let searching = query.chars().count() >= 2;
+
+    let filter = ClipFilter {
+        recency_first: true,
+        ..Default::default()
+    };
+    // More rows than asked for: the kinds switched off in Settings are dropped
+    // after the fact, so asking for exactly `limit` could come back short.
+    let page = state
+        .store
+        .list(&filter, if searching { query } else { "" }, limit * 4, 0);
+
+    let mut items = Vec::new();
+    for clip in page.items {
+        // Text only, for now: the popup sits in the middle of a sentence, and a
+        // picture has nowhere to go there.
+        if clip.kind != ClipKind::Text || !settings.quick_paste_text {
+            continue;
+        }
+        let secret = clip.secret_level.is_some();
+        items.push(QuickItem {
+            id: clip.id,
+            kind: clip.kind,
+            // A sealed clip's text is not readable while the vault is locked, and
+            // showing its preview would leak the part the list stores in plain
+            // text.
+            label: if secret {
+                "Secret clip".to_string()
+            } else {
+                clip.preview.clone()
+            },
+            detail: clip.source_app.clone(),
+            secret,
+        });
+        if items.len() >= limit {
+            break;
+        }
+    }
+    items
+}
+
+/// Pastes the chosen clip into the window the popup was opened from.
+///
+/// The popup is closed *first*, and the work happens on its own thread: waiting on a
+/// clipboard another process is holding takes a while, and none of that may leave
+/// the menu sitting over the application it was pasting into. A failure is reported
+/// by the failure sound and the log, because the window that could have shown it is
+/// already gone.
+#[tauri::command]
+pub fn quick_commit_clip(app: AppHandle, id: i64) -> Result<()> {
+    window::close_quick(&app);
+    let handle = app.clone();
+    std::thread::Builder::new()
+        .name("quick-commit".into())
+        .spawn(move || {
+            let state = handle.state::<AppState>();
+            let settings = state.store.settings();
+            match publish_clip(&handle, &state, id) {
+                Ok(sequence) => {
+                    sound::play(&settings, sound::Outcome::Copied);
+                    schedule_auto_clear(&handle, sequence, &settings, true);
+                    quick_paste(&handle, &settings);
+                }
+                Err(e) => {
+                    log::warn!("could not paste clip {id} from the quick popup: {e}");
+                    sound::play(&settings, sound::Outcome::Failed);
+                    let message = quick_paste_failure(&state, id, e);
+                    report_paste_failure(&handle, &message);
+                }
+            }
+        })
+        .map_err(|e| AppError::msg(format!("could not start the paste: {e}")))?;
+    Ok(())
+}
+
+/// Turns a failed quick paste into the message the popup shows.
+///
+/// A sealed clip under a locked vault fails with "no stored body", which says
+/// nothing about the vault, so that one case is translated. Everything else keeps
+/// the message the clipboard or the media folder produced — replacing them all
+/// with "unlock the vault" only hid the real reason a picture would not paste.
+fn quick_paste_failure(state: &AppState, id: i64, error: AppError) -> AppError {
+    if state.store.vault_status() != "locked" {
+        return error;
+    }
+    let sealed = state
+        .store
+        .detail(id)
+        .map(|detail| detail.summary.secret_level.is_some() || detail.summary.media_locked)
+        .unwrap_or(false);
+    if sealed {
+        AppError::msg("unlock the vault to paste a secret clip")
+    } else {
+        error
+    }
+}
+
+/// Pastes literal text: what an emoji row commits.
+///
+/// It is not recorded as a clip — nothing was copied, the character was typed —
+/// so the payload is written and the watcher told to ignore it.
+#[tauri::command]
+pub fn quick_commit_text(app: AppHandle, state: State<'_, AppState>, text: String) -> Result<()> {
+    let settings = state.store.settings();
+    let hash = clipboard::write(&ClipContent::Text(text))?;
+    let sequence = clipboard::sequence_number();
+    state.watcher.suppress_hash(hash);
+    window::close_quick(&app);
+    schedule_auto_clear(&app, sequence, &settings, true);
+    sound::play(&settings, sound::Outcome::Copied);
+    quick_paste(&app, &settings);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn quick_close(app: AppHandle) {
+    window::close_quick(&app);
+}
+
+/// Hands the clipboard to the window the popup was opened from.
+///
+/// The popup has the focus when this runs, so the handover waits for it to be gone.
+/// Closing a webview is asynchronous, and activating the target while our window is
+/// still on screen leaves a popup that is visible but no longer has the keyboard —
+/// the menu that looked frozen and could not be dismissed.
+fn quick_paste(app: &AppHandle, settings: &Settings) {
+    let Some(target) = paste::target() else {
+        // Nothing to paste into: the clip is on the clipboard, which is still
+        // useful, so this is not an error.
+        log::debug!("no paste target recorded for the quick popup");
+        return;
+    };
+    let delay = u64::from(settings.paste_delay_ms).max(120);
+    let reporter = app.clone();
+    let sounds = settings.clone();
+    std::thread::spawn(move || {
+        if !wait_for_popup_to_close(&reporter) {
+            // Taking the foreground now would leave the popup in front of the
+            // paste, so the paste is abandoned and the failure is audible instead.
+            log::warn!("the quick popup would not go away, so nothing was pasted");
+            sound::play(&sounds, sound::Outcome::Failed);
+            return;
+        }
+        if let Err(e) = paste::restore_and_paste(target, delay) {
+            log::warn!("quick paste failed: {e}");
+            sound::play(&sounds, sound::Outcome::Failed);
+            report_paste_failure(&reporter, &e);
+        }
+    });
+}
+
+/// Waits for the `::` popup to leave the screen, asking a second time if the first
+/// request was swallowed while its webview was still starting up.
+fn wait_for_popup_to_close(app: &AppHandle) -> bool {
+    for attempt in 0..2 {
+        if attempt > 0 {
+            window::close_quick(app);
+        }
+        for _ in 0..20 {
+            if !window::quick_is_open(app) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+    false
 }
 
 /// Empties the clipboard some time after a copy, when the user asked for it.
@@ -1227,6 +1426,13 @@ pub fn open_settings_section(app: AppHandle, section: String) {
 pub fn open_add_clip_window(app: AppHandle) {
     log::info!("opening the add-clip window");
     window::show_add_clip(&app);
+}
+
+/// Opens the setup wizard in its own decorated window.
+#[tauri::command]
+pub fn open_wizard_window(app: AppHandle) {
+    log::info!("opening the setup wizard window");
+    window::show_wizard(&app);
 }
 
 /// Opens a clip in its own compact, always-on-top window.
@@ -2063,6 +2269,11 @@ pub fn update_settings(
     // would keep its old theme and layout until it was reopened.
     let _ = app.emit(EVENT_SETTINGS_CHANGED, &after);
 
+    // The `::` trigger follows the switch, the token and the deny-list, so it is
+    // handed the settings that were just stored rather than the ones the hook was
+    // built with. Cheap and idempotent when nothing it cares about changed.
+    crate::autocomplete::apply(&app, &after);
+
     Ok(after)
 }
 
@@ -2155,6 +2366,13 @@ pub fn reveal_clip(state: State<'_, AppState>, id: i64) -> Result<()> {
     let path = state.store.reveal_path(id)?;
     tauri_plugin_opener::reveal_item_in_dir(&path)
         .map_err(|e| AppError::msg(format!("could not show {}: {e}", path.display())))
+}
+
+/// Finds an installed KeptCraft and answers with the image editor command line
+/// that points Kept's Edit buttons at it; `None` when it is not installed.
+#[tauri::command]
+pub fn detect_keptcraft() -> Option<String> {
+    crate::editor::detect_keptcraft().map(|exe| crate::editor::keptcraft_command(&exe))
 }
 
 /// Opens an image clip in the external editor chosen in Settings.

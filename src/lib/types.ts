@@ -85,6 +85,17 @@ export interface ClipPage {
   total: number;
 }
 
+/** One row of the `::` auto-complete popup. Emoji rows are built in the interface. */
+export interface QuickItem {
+  /** The clip to paste; 0 for an emoji row. */
+  id: number;
+  /** `emoji` never comes from the backend — it is added by the popup itself. */
+  kind: ClipKind | "emoji";
+  label: string;
+  detail: string | null;
+  secret: boolean;
+}
+
 export interface ClipFilter {
   kind?: ClipKind | null;
   collectionId?: number | null;
@@ -276,8 +287,7 @@ export interface StorageInfo {
 }
 
 export interface Settings {
-  hotkey: string;
-  /** Shortcut that toggles the private capture pause. */
+  hotkey: string;  /** Shortcut that toggles the private capture pause. */
   pauseHotkey: string;
   /** Shortcut that opens the New clip window; empty means none. */
   newClipHotkey: string;
@@ -361,6 +371,16 @@ export interface Settings {
   preferImagesOverText: boolean;
   ignoreSensitive: boolean;
   ignoredApps: string[];
+  /** Open the `::` auto-complete popup while typing in any application. */
+  quickPasteEnabled: boolean;
+  /** Characters that open the popup, with no whitespace. */
+  quickPasteToken: string;
+  /** Process names the token does nothing in. */
+  quickPasteDeniedApps: string[];
+  /** Let the popup offer text clips. */
+  quickPasteText: boolean;
+  /** Let the popup offer emoji, matched by name. */
+  quickPasteEmoji: boolean;
   /** Look for faces in screenshots, so images can be filtered as People. */
   detectFaces: boolean;
   /** Minutes a clip marked secret survives; 0 keeps it under ordinary retention. */

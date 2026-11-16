@@ -1,7 +1,7 @@
 import { clipAction, type ClipAction } from "../lib/actions";
 import { formatRelative, describeClip, clipBadgeClass, clipImageUrl, clipLabel, clipName, leafName, clipMotionUrl } from "../lib/format";
 import { mediaUrl } from "../lib/ipc";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import type { DragEvent as ReactDragEvent } from "react";
 import type { ClipSummary } from "../lib/types";
 import { ClipActionButton } from "./ClipActionButton";
@@ -38,6 +38,8 @@ interface ClipListProps {
   selectedIds: number[];
   loading: boolean;
   emptyMessage: string;
+  /** Extra control under the message, such as a way to include archived clips. */
+  emptyAction?: ReactNode;
   now: number;
   /** Tag name (lower-cased) to its stored colour, when it has one. */
   tagColors: ReadonlyMap<string, string | null>;
@@ -343,6 +345,7 @@ export function ClipList({
   selectedIds,
   loading,
   emptyMessage,
+  emptyAction,
   now,
   tagColors,
   onSelect,
@@ -364,6 +367,7 @@ export function ClipList({
       <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
         <IconImage className="size-6 text-edge" />
         <p className="text-[12px] text-ink-dim">{emptyMessage}</p>
+        {emptyAction}
       </div>
     );
   }

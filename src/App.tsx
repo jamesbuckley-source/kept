@@ -20,7 +20,7 @@ import { VaultGateProvider } from "./lib/vaultGate";
 import { windowKind } from "./lib/windowKind";
 import { EmojiBrowser } from "./components/EmojiBrowser";
 import { GifBrowser } from "./components/GifBrowser";
-import { FirstRunWizard } from "./components/FirstRunWizard";
+import { WizardWindow } from "./components/WizardWindow";
 import { PromptDialog } from "./components/PromptDialog";
 import { CaptureCountdown } from "./components/CaptureCountdown";
 import { RecordArea } from "./components/RecordArea";
@@ -78,11 +78,13 @@ import {
   getStats,
   hideWindow,
   importDroppedFiles,
+  listClips,
   listCollections,
   listTags,
   openPath,
   openEmail,
   openAddClipWindow,
+  openWizardWindow,
   openRecordBar,
   openRuler,
   openStickyClipWindow,
@@ -265,8 +267,6 @@ function MainApp() {
     hide: boolean;
     secrets: number;
   } | null>(null);
-  /** Opened from Settings; the first run opens it automatically instead. */
-  const [wizardOpen, setWizardOpen] = useState(false);
   /** Highlighted while files are dragged over the window. */
   const [dragging, setDragging] = useState(false);
   /** The button the paste stack panel hangs off, or null while it is closed. */
@@ -311,6 +311,17 @@ function MainApp() {
     [patch],
   );
 
+  // The wizard is a window of its own now, so the first run opens one rather than
+  // painting an overlay over the history. Once per launch: closing it without
+  // finishing is an answer, and the next launch is soon enough to ask again.
+  const setupOffered = useRef(false);
+  useEffect(() => {
+    if (setupOffered.current || !settings || settings.setupComplete) return;
+    if (standaloneSettings || windowLabel !== "main") return;
+    setupOffered.current = true;
+    void openWizardWindow().catch(() => undefined);
+  }, [settings, standaloneSettings, windowLabel]);
+
   // Typing stays local; the store query is debounced so a fast typist does not
   // trigger a decrypt-and-score pass on every keystroke.
   //
@@ -333,6 +344,33 @@ function MainApp() {
     error: historyError,
     reload: reloadHistory,
   } = useHistory(filter, searchText, settings?.sortOrder ?? "updated-desc");
+
+  /**
+   * Archived clips the current view is hiding. The empty state offers to include
+   * them, but only once we know there is something to reveal, which one extra
+   * query with the archive switch flipped answers.
+   */
+  const [hiddenArchived, setHiddenArchived] = useState(0);
+  const browsingArchive =
+    view.kind === "collection" &&
+    collections.some((collection) => collection.id === view.id && collection.archived);
+  useEffect(() => {
+    if (filter.includeArchived || browsingArchive || loading || total > 0) {
+      setHiddenArchived(0);
+      return;
+    }
+    let cancelled = false;
+    listClips({ filter: { ...filter, includeArchived: true }, query: searchText, limit: 1 })
+      .then((page) => {
+        if (!cancelled) setHiddenArchived(page.total);
+      })
+      .catch(() => {
+        if (!cancelled) setHiddenArchived(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [browsingArchive, filter, loading, searchText, total]);
 
   const bump = useCallback(() => setDataVersion((version) => version + 1), []);
 
@@ -2890,6 +2928,19 @@ function MainApp() {
     : view.kind === "all"
       ? "Nothing captured yet — copy something and it will appear here."
       : `No clips under ${activeFilter}.`;
+  /** An empty list that archived clips would fill says so, and offers the switch. */
+  const emptyAction =
+    hiddenArchived > 0 ? (
+      <button
+        type="button"
+        onClick={() => setIncludeArchived(true)}
+        title="Search the clips kept in archive collections too"
+        className="mt-1 flex items-center gap-1 rounded border border-edge bg-panel-2 px-2 py-1 text-[11px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
+      >
+        <IconArchive className="size-3" />
+        Include {hiddenArchived} archived {hiddenArchived === 1 ? "item" : "items"}
+      </button>
+    ) : null;
   // Failures from any layer surface in one banner; successes share the strip,
   // except on the settings page, which draws its own notice inside the panel, and
   // under the preview overlay, which repeats the notice inside its own frame.
@@ -3081,7 +3132,7 @@ function MainApp() {
           appVersion={appVersion}
           updateState={updater.state}
           onCheckForUpdates={() => void updater.checkNow()}
-          onRunSetup={() => setWizardOpen(true)}
+          onRunSetup={() => void openWizardWindow().catch((e) => setError(errorMessage(e)))}
           onOpenChangelog={(version) => openLink(releaseUrl(version))}
           onOpenProject={() => openLink(projectUrl())}
           onChooseSound={(kind) => void chooseSound(kind)}
@@ -3321,6 +3372,7 @@ function MainApp() {
                         selectedIds={selectedIds}
                         loading={loading}
                         emptyMessage={emptyMessage}
+                        emptyAction={emptyAction}
                         now={now}
                         scale={gridPercent / 100}
                         tagColors={tagColors}
@@ -3346,6 +3398,7 @@ function MainApp() {
                         selectedIds={selectedIds}
                         loading={loading}
                         emptyMessage={emptyMessage}
+                        emptyAction={emptyAction}
                         now={now}
                         tagColors={tagColors}
                         onSelect={selectClip}
@@ -3638,20 +3691,6 @@ function MainApp() {
         />
       )}
 
-      {settings &&
-        (wizardOpen || (!standaloneSettings && !settings.setupComplete)) && (
-          <FirstRunWizard
-            settings={settings}
-            firstRun={!settings.setupComplete}
-            onApply={patch}
-            onClose={() => setWizardOpen(false)}
-            onFinish={() => {
-              setWizardOpen(false);
-              window.setTimeout(() => searchRef.current?.focus(), 0);
-            }}
-          />
-        )}
-
       {stackAnchor && (
         <PasteStackPanel
           anchor={stackAnchor}
@@ -3707,6 +3746,9 @@ export default function App() {
   }
   if (kind === "countdown") {
     return <CaptureCountdown />;
+  }
+  if (kind === "wizard") {
+    return <WizardWindow />;
   }
   if (kind === "sticky") {
     const rawId = new URLSearchParams(window.location.search).get("id");
