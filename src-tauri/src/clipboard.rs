@@ -1269,14 +1269,40 @@ pub(crate) fn process_name_for(_handle: isize) -> Option<String> {
 // Non-Windows stubs
 // ---------------------------------------------------------------------------
 
+/// X11 has no clipboard sequence number, so the content itself is the signal:
+/// whatever is on the clipboard is read and folded into a number. That costs a
+/// clipboard read per poll where Windows reads a counter.
 #[cfg(not(windows))]
 pub fn sequence_number() -> u32 {
-    0
+    /// FNV-1a. Small, and enough to notice that the clipboard moved on.
+    fn fold(seed: u32, bytes: &[u8]) -> u32 {
+        bytes.iter().fold(seed, |acc, byte| {
+            (acc ^ u32::from(*byte)).wrapping_mul(0x0100_0193)
+        })
+    }
+
+    if let Some(text) = read_text() {
+        return fold(0x811c_9dc5, text.as_bytes());
+    }
+    match read_image() {
+        Some(ClipContent::Image {
+            width,
+            height,
+            rgba,
+        }) => {
+            let seed = fold(0x811c_9dc5, &width.to_le_bytes()) ^ height;
+            fold(seed, &rgba)
+        }
+        _ => 0,
+    }
 }
 
 #[cfg(not(windows))]
 fn read_text() -> Option<String> {
-    None
+    let mut clip = arboard::Clipboard::new().ok()?;
+    let text = clip.get_text().ok()?;
+    let trimmed = text.trim().trim_matches('\0').trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 #[cfg(not(windows))]
@@ -1291,7 +1317,27 @@ fn read_rich_text() -> (Option<String>, Option<String>) {
 
 #[cfg(not(windows))]
 fn read_image() -> Option<ClipContent> {
-    None
+    // arboard serves X11 as well as Windows, so the image path is the same code.
+    let mut clip = arboard::Clipboard::new().ok()?;
+    let image = clip.get_image().ok()?;
+    if image.width == 0 || image.height == 0 {
+        return None;
+    }
+    let expected = image.width.checked_mul(image.height)?.checked_mul(4)?;
+    if image.bytes.len() < expected {
+        log::warn!(
+            "clipboard image is {} bytes but {}x{} RGBA needs {expected}",
+            image.bytes.len(),
+            image.width,
+            image.height
+        );
+        return None;
+    }
+    Some(ClipContent::Image {
+        width: image.width as u32,
+        height: image.height as u32,
+        rgba: image.bytes[..expected].to_vec(),
+    })
 }
 
 #[cfg(not(windows))]
@@ -1301,7 +1347,14 @@ fn clipboard_opt_out() -> bool {
 
 #[cfg(not(windows))]
 fn foreground_process_name() -> Option<String> {
-    None
+    // The X11 focus owner's process is the closest thing to "the app you copied
+    // from"; the name comes from /proc, which is what a Linux user would expect.
+    let report = crate::paste::xdotool(&["getactivewindow", "getwindowpid"]).ok()?;
+    let pid: u32 = report.split_whitespace().last()?.parse().ok()?;
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
 }
 
 #[cfg(test)]
