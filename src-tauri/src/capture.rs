@@ -639,7 +639,7 @@ pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>
 
 /// Reads the root window into an RGBA clip.
 #[cfg(not(windows))]
-fn grab_desktop() -> Result<ClipContent> {
+pub(crate) fn grab_desktop() -> Result<ClipContent> {
     let path = std::env::temp_dir().join(format!("kept-shot-{}.png", uuid::Uuid::new_v4()));
     let output = std::process::Command::new("maim")
         // Without this maim super-imposes the pointer onto the picture.

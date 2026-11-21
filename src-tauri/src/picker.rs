@@ -86,12 +86,52 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     outcome
 }
 
-/// Non-Windows builds have no screen to sample.
+/// X11 cannot watch for a click from outside a window, so the pick is the colour
+/// under the pointer at the instant the shortcut fires — where the Windows
+/// picker's click would have landed.
 #[cfg(not(windows))]
-pub fn pick(_app: &AppHandle) -> Result<Option<String>> {
-    Err(AppError::msg(
-        "picking a color from the screen is only supported on Windows",
-    ))
+pub fn pick(app: &AppHandle) -> Result<Option<String>> {
+    use crate::models::ClipContent;
+
+    crate::window::hide(app);
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let frame = crate::capture::grab_desktop();
+    crate::window::show(app);
+
+    let ClipContent::Image {
+        width,
+        height,
+        rgba,
+    } = frame?
+    else {
+        return Ok(None);
+    };
+
+    let report = crate::paste::xdotool(&["getmouselocation", "--shell"])?;
+    let mut x: Option<i64> = None;
+    let mut y: Option<i64> = None;
+    for line in report.lines() {
+        if let Some(value) = line.strip_prefix("X=") {
+            x = value.trim().parse().ok();
+        }
+        if let Some(value) = line.strip_prefix("Y=") {
+            y = value.trim().parse().ok();
+        }
+    }
+    let (Some(x), Some(y)) = (x, y) else {
+        return Ok(None);
+    };
+    if x < 0 || y < 0 || x >= i64::from(width) || y >= i64::from(height) {
+        return Ok(None);
+    }
+    let offset = (y as usize * width as usize + x as usize) * 4;
+    let Some(pixel) = rgba.get(offset..offset + 4) else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        pixel[0], pixel[1], pixel[2]
+    )))
 }
 
 #[cfg(windows)]
