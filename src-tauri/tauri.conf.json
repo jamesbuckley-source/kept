@@ -44,7 +44,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": "all",
     "createUpdaterArtifacts": true,
     "shortDescription": "Advanced clipboard management and utilities, stored locally",
     "longDescription": "Kept keeps a searchable history of everything you copy - text, images and file lists - on your own machine. Clip contents are stored locally in a SQLite database.",
