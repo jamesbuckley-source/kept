@@ -6,6 +6,7 @@ Short clips of Kept in use, recorded for the README and release notes.
 | --- | --- |
 | `kept-paste-stack.mp4` | Copying a handful of clips, then pasting them back in order with Paste stack. |
 | `kept-colour-palette.mp4` | Pulling the colour scheme out of a screenshot and keeping it as an archive of colour clips. |
+| `kept-copy-from-web.mp4` | Copying samples from [`demo.html`](../demo.html) with Kept open beside the page, and watching them land in the history. |
 
 ## Recording rules
 
