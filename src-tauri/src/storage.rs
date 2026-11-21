@@ -344,6 +344,9 @@ mod tests {
         }
     }
 
+    /// Cloud-folder detection is driven by Windows paths; the Linux one is not
+    /// written yet.
+    #[cfg(windows)]
     #[test]
     fn a_sync_folder_is_named_and_a_plain_one_is_not() {
         let roots = [PathBuf::from(r"C:\Users\me\Dropbox")];

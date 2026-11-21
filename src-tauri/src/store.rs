@@ -4897,6 +4897,8 @@ mod tests {
         );
     }
 
+    /// The legacy rows are DPAPI-wrapped, so this needs Windows to run.
+    #[cfg(windows)]
     #[test]
     fn legacy_encrypted_rows_are_migrated_to_plaintext() {
         let dir = tempfile::tempdir().unwrap();
@@ -6751,6 +6753,9 @@ mod tests {
         assert!(!store.refresh_image_files(id, &source, None).unwrap());
     }
 
+    /// Revealing a file splits a Windows path; the Linux behaviour is not written
+    /// yet, so the assertions below are Win32-shaped.
+    #[cfg(windows)]
     #[test]
     fn reveal_path_points_at_stored_files() {
         let (store, _dir) = test_store();

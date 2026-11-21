@@ -31,6 +31,35 @@ pub fn target() -> Option<isize> {
     }
 }
 
+/// X11 has no window handles to hold onto, so the port drives `xdotool` for the
+/// few things Windows does through `user32`.
+#[cfg(not(windows))]
+pub(crate) fn xdotool(args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("xdotool")
+        .args(args)
+        .output()
+        .map_err(|e| AppError::msg(format!("xdotool is not available ({e}); install xdotool")))?;
+    if !output.status.success() {
+        return Err(AppError::msg(format!(
+            "xdotool {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The X11 window that owns the input focus, if there is one.
+#[cfg(not(windows))]
+fn active_window() -> Option<isize> {
+    xdotool(&["getactivewindow"])
+        .ok()?
+        .trim()
+        .parse::<isize>()
+        .ok()
+        .filter(|id| *id != 0)
+}
+
 /// Records the window that is in front right now, ignoring `own_window`.
 ///
 /// Called as the hotkey fires, before our window is shown, so the remembered
@@ -49,8 +78,13 @@ pub fn capture_foreground(own_window: Option<isize>) {
     TARGET.store(window.0 as isize, Ordering::Relaxed);
 }
 
+/// The X11 focus owner stands in for Windows' foreground window.
 #[cfg(not(windows))]
-pub fn capture_foreground(_own_window: Option<isize>) {}
+pub fn capture_foreground(_own_window: Option<isize>) {
+    if let Some(window) = active_window() {
+        TARGET.store(window, Ordering::Relaxed);
+    }
+}
 
 /// Records the window in front, ignoring every one of our own windows.
 ///
@@ -71,7 +105,11 @@ pub fn capture_foreground_excluding(own: &[isize]) {
 }
 
 #[cfg(not(windows))]
-pub fn capture_foreground_excluding(_own: &[isize]) {}
+pub fn capture_foreground_excluding(_own: &[isize]) {
+    if let Some(window) = active_window() {
+        TARGET.store(window, Ordering::Relaxed);
+    }
+}
 
 /// Brings a remembered window back to the foreground, restoring it if minimised.
 #[cfg(windows)]
@@ -97,8 +135,8 @@ pub fn activate(handle: isize) -> bool {
 }
 
 #[cfg(not(windows))]
-pub fn activate(_handle: isize) -> bool {
-    false
+pub fn activate(handle: isize) -> bool {
+    xdotool(&["windowactivate", "--sync", &handle.to_string()]).is_ok()
 }
 
 /// True when `handle` is the window Windows is currently sending input to.
@@ -110,8 +148,8 @@ fn foreground_is(handle: isize) -> bool {
 }
 
 #[cfg(not(windows))]
-fn foreground_is(_handle: isize) -> bool {
-    false
+fn foreground_is(handle: isize) -> bool {
+    active_window() == Some(handle)
 }
 
 /// Hides our window, focuses the target, and sends Ctrl+V.
@@ -224,10 +262,18 @@ pub fn send_backspaces(count: usize) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-pub fn send_backspaces(_count: usize) -> Result<()> {
-    Err(AppError::msg(
-        "removing the trigger token is only implemented on Windows",
-    ))
+pub fn send_backspaces(count: usize) -> Result<()> {
+    let count = count.clamp(1, 8).to_string();
+    xdotool(&[
+        "key",
+        "--clearmodifiers",
+        "--repeat",
+        &count,
+        "--delay",
+        "20",
+        "BackSpace",
+    ])
+    .map(|_| ())
 }
 
 /// Brings one of our own windows to the front, past the foreground lock.
@@ -276,8 +322,8 @@ pub fn take_foreground(handle: isize) -> bool {
 }
 
 #[cfg(not(windows))]
-pub fn take_foreground(_handle: isize) -> bool {
-    false
+pub fn take_foreground(handle: isize) -> bool {
+    activate(handle)
 }
 
 #[cfg(windows)]
@@ -307,7 +353,9 @@ fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {    // Supplying the scan
 
 #[cfg(not(windows))]
 pub fn send_paste() -> Result<()> {
-    Err(AppError::msg("auto-paste is only implemented on Windows"))
+    // `--clearmodifiers` takes the place of `clear_modifiers`: xdotool drops the
+    // chord the user is still holding before it types Ctrl+V.
+    xdotool(&["key", "--clearmodifiers", "ctrl+v"]).map(|_| ())
 }
 
 #[cfg(test)]

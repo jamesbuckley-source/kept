@@ -429,6 +429,8 @@ mod tests {
         assert_eq!(args, ["open-annotate", "--filepath", r"C:\my shots\one.png", "--overwrite"]);
     }
 
+    /// The installer's folders are Windows ones, so this asserts Win32 layout.
+    #[cfg(windows)]
     #[test]
     fn the_installed_keptcraft_folders_are_the_ones_its_installer_uses() {
         let folders = install_folders();

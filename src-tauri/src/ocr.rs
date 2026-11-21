@@ -101,11 +101,45 @@ fn to_bgra(rgba: &[u8], width: u32, height: u32, max_dimension: u32) -> (u32, u3
     (width, height, bgra)
 }
 
+/// Tesseract reads a file rather than memory, so the frame is written out as a
+/// PNG first. `--psm 6` treats the image as one uniform block of text, which is
+/// what the Windows engine's layout guess amounts to for a screenshot.
 #[cfg(not(windows))]
-pub fn extract_text(_rgba: &[u8], _width: u32, _height: u32) -> Result<String> {
-    Err(AppError::msg(
-        "text recognition is only available on Windows",
-    ))
+pub fn extract_text(rgba: &[u8], width: u32, height: u32) -> Result<String> {
+    if width == 0 || height == 0 {
+        return Ok(String::new());
+    }
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() < expected {
+        return Err(AppError::msg(format!(
+            "expected {expected} bytes of RGBA, got {}",
+            rgba.len()
+        )));
+    }
+    let frame = image::RgbaImage::from_raw(width, height, rgba[..expected].to_vec())
+        .ok_or_else(|| AppError::msg("could not build the OCR image"))?;
+    let path = std::env::temp_dir().join(format!("kept-ocr-{}.png", uuid::Uuid::new_v4()));
+    frame.save(&path)?;
+
+    let output = std::process::Command::new("tesseract")
+        .arg(&path)
+        .arg("stdout")
+        .arg("--psm")
+        .arg("6")
+        .output();
+    let _ = std::fs::remove_file(&path);
+    let output = output.map_err(|e| {
+        AppError::msg(format!(
+            "tesseract is not available ({e}); install tesseract-ocr"
+        ))
+    })?;
+    if !output.status.success() {
+        return Err(AppError::msg(format!(
+            "tesseract failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(all(test, windows))]

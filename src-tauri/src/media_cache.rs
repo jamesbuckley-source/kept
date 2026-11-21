@@ -315,10 +315,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache_dir = dir.path().join("cache");
         std::fs::create_dir_all(&cache_dir).unwrap();
-        // Written oldest first, so the later ones are the newest.
-        for name in ["old.thumb.png", "middle.thumb.png", "new.thumb.png"] {
-            std::fs::write(cache_dir.join(name), vec![0u8; 8]).unwrap();
-            std::thread::sleep(Duration::from_millis(5));
+        // Ages are set outright rather than left to the clock: a filesystem with
+        // coarse timestamps can give three writes the same mtime, which leaves
+        // "oldest" up to the sort order.
+        let now = std::time::SystemTime::now();
+        for (name, age_secs) in [
+            ("old.thumb.png", 30u64),
+            ("middle.thumb.png", 20),
+            ("new.thumb.png", 10),
+        ] {
+            let path = cache_dir.join(name);
+            std::fs::write(&path, vec![0u8; 8]).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(now - Duration::from_secs(age_secs))
+                .unwrap();
         }
         // A partial write from a crash is cleaned up rather than served.
         std::fs::write(cache_dir.join("half.thumb.png.part"), b"junk").unwrap();

@@ -79,13 +79,29 @@ docker compose -f docker/compose.yaml down -v
 
 ## Where the Linux port stands
 
-- `cargo check --all-targets` is green, and `npm run tauri dev` builds and opens
-  the app on the container desktop (setup wizard, SQLite migrations, global
-  shortcuts and the tray all come up).
-- Clipboard **writes** use `arboard` on X11 (`write_flavoured`); rich HTML/RTF
-  flavours and X11 file lists are not carried yet.
-- Capture, OCR, paste injection and the printscreen hooks are still the Win32
-  implementations only; the Linux side of those traits has not been written.
+`cargo check --all-targets` is green, `cargo test --lib` is **450 passing, 0
+failing** on Linux (475 on Windows), and `npm run tauri dev` opens the app on the
+container desktop — setup wizard, SQLite migrations, global shortcuts and the tray
+all come up.
+
+Implemented for X11:
+
+| Area | Linux implementation |
+| --- | --- |
+| Clipboard writes | `arboard` (`write_flavoured`); no HTML/RTF flavours, file lists go as text |
+| Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
+| Desktop bounds | `xdotool getdisplaygeometry` |
+| Paste / window activation | `xdotool key ctrl+v`, `windowactivate` |
+| Trigger backspaces | `xdotool key --repeat BackSpace` |
+| OCR | `tesseract --psm 6` on a temporary PNG |
+
+Still Windows-only, and next in the port:
+
+- region and window capture (needs an X11 selection overlay), scrolling capture
+- the Print Screen hook (`printscreen.rs`), so captures are only reachable from
+  the hotkeys in Settings on Linux
+- X11 file lists (`text/uri-list`), cloud-folder detection, `reveal_path`,
+  the KeptCraft install paths, and the recorder's Win32 pieces
 
 ## Known limits
 

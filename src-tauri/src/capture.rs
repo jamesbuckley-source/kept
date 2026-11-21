@@ -616,11 +616,58 @@ fn hides_for_capture(app: &AppHandle) -> bool {
     hidden
 }
 
-/// Non-Windows builds have no screen to capture.
+/// Hides the app and captures the whole desktop in one image, the X11 way:
+/// `maim` reads the root window, which is every screen at once.
 #[cfg(not(windows))]
-pub fn capture_region(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
-    Err(AppError::msg(
-        "capturing a screen region is only supported on Windows",
+pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    let hidden = tauri::Manager::state::<crate::AppState>(app)
+        .store
+        .settings()
+        .hide_on_capture;
+    if hidden {
+        crate::window::hide(app);
+        std::thread::sleep(std::time::Duration::from_millis(
+            u64::from(delay).min(2_000),
+        ));
+    }
+    let result = grab_desktop();
+    if hidden {
+        crate::window::show(app);
+    }
+    result.map(Some)
+}
+
+/// Reads the root window into an RGBA clip.
+#[cfg(not(windows))]
+fn grab_desktop() -> Result<ClipContent> {
+    let path = std::env::temp_dir().join(format!("kept-shot-{}.png", uuid::Uuid::new_v4()));
+    let output = std::process::Command::new("maim")
+        // Without this maim super-imposes the pointer onto the picture.
+        .arg("--hidecursor")
+        .arg(&path)
+        .output()
+        .map_err(|e| AppError::msg(format!("maim is not available ({e}); install maim")))?;
+    let decoded = if output.status.success() {
+        image::open(&path).map(|frame| frame.to_rgba8())
+    } else {
+        Err(image::ImageError::IoError(std::io::Error::other(format!(
+            "maim failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))))
+    };
+    let _ = std::fs::remove_file(&path);
+    let frame = decoded?;
+    Ok(ClipContent::Image {
+        width: frame.width(),
+        height: frame.height(),
+        rgba: frame.into_raw(),
+    })
+}
+
+/// Non-Windows builds have no region picker yet.
+#[cfg(not(windows))]
+pub fn capture_region(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {    Err(AppError::msg(
+        "capturing a screen region is not implemented on this platform yet",
     ))
 }
 
@@ -679,7 +726,17 @@ pub fn desktop_bounds() -> Rect {
     }
     #[cfg(not(windows))]
     {
-        Rect::new(0, 0, 0, 0)
+        // One root window on X11, so its size is both the primary and the whole
+        // desktop. `xdotool` is the cheapest way to ask the server.
+        match crate::paste::xdotool(&["getdisplaygeometry"]) {
+            Ok(report) => {
+                let mut parts = report.split_whitespace();
+                let width = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                let height = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                Rect::new(0, 0, width, height)
+            }
+            Err(_) => Rect::new(0, 0, 0, 0),
+        }
     }
 }
 
@@ -802,13 +859,6 @@ impl Drop for RecordOutline {
 pub fn capture_window(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
     Err(AppError::msg(
         "capturing a window is only supported on Windows",
-    ))
-}
-
-#[cfg(not(windows))]
-pub fn capture_screen(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
-    Err(AppError::msg(
-        "capturing the screen is only supported on Windows",
     ))
 }
 
@@ -3852,5 +3902,32 @@ mod tests {
             0x00ff_ffff,
             "the shipped blue still takes white text"
         );
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod linux_tests {
+    use super::*;
+
+    /// The port's capture path is `maim` plus a decode, so this is the test that
+    /// proves it end to end. It needs a running X server; with no display the
+    /// bounds come back empty and the check stands down.
+    #[test]
+    fn the_root_window_is_captured_as_an_rgba_image() {
+        let bounds = desktop_bounds();
+        if bounds.is_empty() {
+            eprintln!("no X display: skipping the capture check");
+            return;
+        }
+        let clip = grab_desktop().expect("the root window should be captured");
+        match clip {
+            ClipContent::Image { width, height, rgba } => {
+                assert_eq!(width, bounds.width() as u32, "captured width");
+                assert_eq!(height, bounds.height() as u32, "captured height");
+                assert_eq!(rgba.len(), width as usize * height as usize * 4);
+                assert!(!looks_blank(&rgba), "the captured screen was blank");
+            }
+            _ => panic!("a screen capture should be an image"),
+        }
     }
 }
