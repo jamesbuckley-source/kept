@@ -904,8 +904,8 @@ export function ClipDetailPane({
         <button
           type="button"
           onClick={() => onSaveAs(clip)}
-          title="Save this clip to a folder"
-          aria-label="Save clip to a folder"
+          title="Save this clip as a file"
+          aria-label="Save this clip as a file"
           className="flex shrink-0 items-center justify-center rounded px-2 py-1.5 text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink @max-[248px]:px-1"
         >
           <IconSave className="size-3.5" />

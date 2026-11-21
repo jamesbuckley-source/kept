@@ -33,7 +33,7 @@ use crate::search;
 use crate::settings::{GifFavorite, Settings};
 use crate::sound;
 use crate::storage::StorageInfo;
-use crate::store::Store;
+use crate::store::{SaveFormat, SaveReport, Store};
 use crate::window;
 
 use crate::clipboard::PauseState;
@@ -2887,6 +2887,22 @@ pub fn storage_info(app: AppHandle, state: State<'_, AppState>) -> Result<Storag
     ))
 }
 
+/// Opens the window that shows what a released version contains.
+#[tauri::command]
+pub fn open_whats_new_window(app: AppHandle) -> Result<()> {
+    crate::window::show_whats_new(&app);
+    Ok(())
+}
+
+/// Names the sync service that owns `path`, when one does.
+///
+/// The settings page asks before it moves a live database into Dropbox or Google
+/// Drive, where a client can copy files mid-transaction.
+#[tauri::command]
+pub fn storage_cloud_service(path: String) -> Option<String> {
+    crate::storage::cloud_service(std::path::Path::new(path.trim())).map(str::to_string)
+}
+
 /// Copies the history to `path`, points the app at it and restarts.
 ///
 /// Restarting rather than hot-swapping the store guarantees no thread keeps a
@@ -3079,22 +3095,46 @@ pub fn add_to_collection(
 // Saving and opening payloads
 // ---------------------------------------------------------------------------
 
-/// Copies a clip's payload into `dir`, returning the files that were written.
+/// Copies a clip's payload into `dir`, returning what was written.
 #[tauri::command]
 pub fn save_clip(
     app: AppHandle,
     state: State<'_, AppState>,
     id: i64,
     dir: String,
-) -> Result<Vec<String>> {
+) -> Result<SaveReport> {
     let target = std::path::PathBuf::from(dir.trim());
     if !target.is_absolute() {
         return Err(AppError::msg("choose an absolute folder path"));
     }
-    let written = state.store.save_clip(id, &target)?;
+    let report = state.store.save_clip(id, &target)?;
     log::info!("saved clip {id} to {}", target.display());
     notify_history_changed(&app);
+    Ok(report)
+}
+
+/// Writes one clip to the exact file a "Save as…" dialog returned.
+#[tauri::command]
+pub fn save_clip_as(
+    state: State<'_, AppState>,
+    id: i64,
+    path: String,
+    format: String,
+) -> Result<String> {
+    let target = std::path::PathBuf::from(path.trim());
+    if !target.is_absolute() {
+        return Err(AppError::msg("choose an absolute file path"));
+    }
+    let format = SaveFormat::parse(&format)?;
+    let written = state.store.save_clip_as(id, &target, format)?;
+    log::info!("saved clip {id} as {}", target.display());
     Ok(written)
+}
+
+/// The file name a save dialog should offer for a clip.
+#[tauri::command]
+pub fn suggest_save_name(state: State<'_, AppState>, id: i64, format: String) -> Result<String> {
+    state.store.suggest_save_name(id, SaveFormat::parse(&format)?)
 }
 
 /// Exports several clips into one folder, used by the bulk bar.
@@ -3104,18 +3144,19 @@ pub fn save_clips(
     state: State<'_, AppState>,
     ids: Vec<i64>,
     dir: String,
-) -> Result<Vec<String>> {
+    by_kind: Option<bool>,
+) -> Result<SaveReport> {
     let target = std::path::PathBuf::from(dir.trim());
     if !target.is_absolute() {
         return Err(AppError::msg("choose an absolute folder path"));
     }
     if ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SaveReport::default());
     }
-    let written = state.store.save_clips(&ids, &target)?;
+    let report = state.store.save_clips(&ids, &target, by_kind.unwrap_or(false))?;
     log::info!("exported {} clip(s) to {}", ids.len(), target.display());
     notify_history_changed(&app);
-    Ok(written)
+    Ok(report)
 }
 
 /// Writes a GIF converted from a video clip to the file the user chose.

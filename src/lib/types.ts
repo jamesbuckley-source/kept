@@ -56,6 +56,8 @@ export interface ClipSummary {
   faceCount: number;
   /** True when this link was stored after tracking parameters were stripped. */
   urlCleaned: boolean;
+  /** True when a text clip carries HTML/RTF beside its plain text. */
+  hasRich: boolean;
 }
 
 export interface ClipDetail extends ClipSummary {
@@ -67,8 +69,6 @@ export interface ClipDetail extends ClipSummary {
   ocrText: string | null;
   /** A free-form note the user attached to the clip. */
   note: string | null;
-  /** True when HTML/RTF were captured next to the plain text. */
-  hasRich: boolean;
   /** The link as copied, when its tracking parameters were stripped. */
   uncleanedUrl: string | null;
 }
@@ -83,6 +83,27 @@ export interface MarkdownExport {
   written: string[];
   skipped: number;
 }
+
+/**
+ * What a save wrote, and the file-clip originals that had gone missing before it
+ * could copy them. A vanished original is reported rather than failing the whole
+ * export.
+ */
+export interface SaveReport {
+  written: string[];
+  missing: string[];
+}
+
+/** The form a clip is written in, chosen from the shape of its payload. */
+export type SaveFormat =
+  | "text"
+  | "markdown"
+  | "html"
+  | "css"
+  | "url"
+  | "json"
+  | "image"
+  | "motion";
 
 export interface ClipPage {
   items: ClipSummary[];
@@ -288,6 +309,8 @@ export interface StorageInfo {
   dataDir: string;
   defaultDir: string;
   custom: boolean;
+  /** The sync service that owns the folder, when one does. */
+  cloud: string | null;
 }
 
 export interface Settings {
@@ -434,6 +457,8 @@ export interface Settings {
   autoUpdate: boolean;
   /** Unix milliseconds of the last update check. */
   lastUpdateCheck: number;
+  /** A release the user skipped, so the update window stops offering it. */
+  skippedUpdateVersion: string;
   /** Saved queries shown as smart views in the sidebar. */
   savedSearches: SavedSearch[];
   /** Emoji pinned to the top of the emoji browser. */
@@ -462,6 +487,8 @@ export interface Settings {
   gifLoop: boolean;
   /** Folder one-click Markdown exports go to; empty asks each time. */
   markdownExportDir: string;
+  /** Folder the last save used, so the next dialog starts there. */
+  lastSaveDir: string;
   /** Precede exported notes with YAML front matter. */
   markdownFrontMatter: boolean;
   /** Prefix note filenames with the capture date. */

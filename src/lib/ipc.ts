@@ -21,6 +21,8 @@ import type {
   RecordStatus,
   RecordToolchain,
   RichText,
+  SaveFormat,
+  SaveReport,
   Settings,
   StackEntry,
   SplitOutcome,
@@ -445,6 +447,11 @@ export function openWizardWindow(): Promise<void> {
   return invoke("open_wizard_window");
 }
 
+/** Opens the window that shows what a released version contains. */
+export function openWhatsNewWindow(): Promise<void> {
+  return invoke("open_whats_new_window");
+}
+
 /** Opens the small window used to type a new clip. */
 export function openAddClipWindow(): Promise<void> {
   return invoke("open_add_clip_window");
@@ -525,6 +532,14 @@ export function setStorageDir(path: string): Promise<void> {
   return invoke("set_storage_dir", { path });
 }
 
+/**
+ * Names the sync service `path` belongs to, when one does. Kept asks before it
+ * puts a live database into a folder a cloud client rewrites behind it.
+ */
+export function storageCloudService(path: string): Promise<string | null> {
+  return invoke<string | null>("storage_cloud_service", { path });
+}
+
 export function setClipCollections(clipId: number, collectionIds: number[]): Promise<number[]> {
   return invoke<number[]>("set_clip_collections", { clipId, collectionIds });
 }
@@ -543,9 +558,12 @@ export function setClipSavedGif(clipId: number, saved: boolean): Promise<number[
   return invoke<number[]>("set_clip_saved_gif", { clipId, saved });
 }
 
-/** Exports several clips into one folder. */
-export function saveClips(ids: number[], dir: string): Promise<string[]> {
-  return invoke<string[]>("save_clips", { ids, dir });
+/**
+ * Exports several clips into one folder. `byKind` sorts them into `Images`,
+ * `Text` and `Files` subfolders.
+ */
+export function saveClips(ids: number[], dir: string, byKind = false): Promise<SaveReport> {
+  return invoke<SaveReport>("save_clips", { ids, dir, byKind });
 }
 
 /** Writes text clips as Markdown notes; images and file clips are skipped. */
@@ -610,9 +628,19 @@ export function addToCollection(ids: number[], collectionId: number): Promise<nu
 
 // ---- payloads -------------------------------------------------------------
 
-/** Copies a clip's payload into `dir`, returning the files that were written. */
-export function saveClip(id: number, dir: string): Promise<string[]> {
-  return invoke<string[]>("save_clip", { id, dir });
+/** Copies a clip's payload into `dir`, returning what was written. */
+export function saveClip(id: number, dir: string): Promise<SaveReport> {
+  return invoke<SaveReport>("save_clip", { id, dir });
+}
+
+/** Writes one clip to the exact file a "Save as…" dialog returned. */
+export function saveClipAs(id: number, path: string, format: SaveFormat): Promise<string> {
+  return invoke<string>("save_clip_as", { id, path, format });
+}
+
+/** The file name a save dialog should offer for this clip and format. */
+export function suggestSaveName(id: number, format: SaveFormat): Promise<string> {
+  return invoke<string>("suggest_save_name", { id, format });
 }
 
 /** Opens an http(s) link from a clip in the default browser. */

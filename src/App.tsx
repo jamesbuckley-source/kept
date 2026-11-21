@@ -5,7 +5,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { ask, open as openDialog, save } from "@tauri-apps/plugin-dialog";
 
 import { AddClipForm } from "./components/AddClipForm";
 import { ClipDetailPane } from "./components/ClipDetailPane";
@@ -27,6 +27,7 @@ import { RecordArea } from "./components/RecordArea";
 import { PasteStackPanel, PasteStackWindow } from "./components/PasteStackPanel";
 import { RecordBar } from "./components/RecordBar";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
+import { WhatsNewWindow } from "./components/WhatsNewWindow";
 import { SearchBar, type ViewMode } from "./components/SearchBar";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
@@ -87,6 +88,7 @@ import {
   openEmail,
   openAddClipWindow,
   openWizardWindow,
+  openWhatsNewWindow,
   openRecordBar,
   openRuler,
   openStickyClipWindow,
@@ -104,6 +106,8 @@ import {
   revealDataDir,
   revealPath,
   saveClip,
+  saveClipAs,
+  suggestSaveName,
   saveClips,
   saveColorPalette,
   loadLinkPreview,
@@ -147,6 +151,8 @@ import {
   type GifFavorite,
   type MarkdownExport,
   type SavedSearch,
+  type SaveFormat,
+  type SaveReport,
   type Settings,
   type SidebarView,
   type VaultStatus,
@@ -213,6 +219,129 @@ function markdownNotice(exported: MarkdownExport, dir: string): string {
   return head + skipped;
 }
 
+/** One way a clip can leave the app. */
+interface SaveChoice {
+  label: string;
+  format: SaveFormat;
+  /** What the file dialog calls this kind of file. */
+  filterName: string;
+  extensions: string[];
+}
+
+/**
+ * The ways a clip can be saved, in the order they make sense for its shape.
+ *
+ * A clip is not just "one thing to write": a link is useful as a shortcut a
+ * double-click opens, a colour as a stylesheet property, and a GIF or video keeps
+ * its movement instead of collapsing to a single frame.
+ */
+function saveChoices(clip: ClipSummary): SaveChoice[] {
+  if (clip.kind === "image") {
+    if (!clip.animated) {
+      return [
+        { label: "Save image…", format: "image", filterName: "PNG image", extensions: ["png"] },
+      ];
+    }
+    return [
+      clip.video
+        ? { label: "Save video…", format: "motion", filterName: "MP4 video", extensions: ["mp4"] }
+        : { label: "Save GIF…", format: "motion", filterName: "GIF image", extensions: ["gif"] },
+      { label: "Save still frame…", format: "image", filterName: "PNG image", extensions: ["png"] },
+    ];
+  }
+  if (clip.kind === "files") return [];
+
+  switch (clip.contentKind) {
+    case "color":
+      return [
+        { label: "Save as text…", format: "text", filterName: "Text", extensions: ["txt"] },
+        { label: "Save as CSS…", format: "css", filterName: "CSS", extensions: ["css"] },
+      ];
+    case "url":
+      return [
+        {
+          label: "Save shortcut…",
+          format: "url",
+          filterName: "Internet shortcut",
+          extensions: ["url"],
+        },
+        { label: "Save as text…", format: "text", filterName: "Text", extensions: ["txt"] },
+      ];
+    case "json":
+      return [{ label: "Save as JSON…", format: "json", filterName: "JSON", extensions: ["json"] }];
+    case "markdown":
+      return [
+        {
+          label: "Save as Markdown…",
+          format: "markdown",
+          filterName: "Markdown",
+          extensions: ["md"],
+        },
+        { label: "Save as text…", format: "text", filterName: "Text", extensions: ["txt"] },
+      ];
+    default: {
+      const choices: SaveChoice[] = [
+        { label: "Save as text…", format: "text", filterName: "Text", extensions: ["txt"] },
+      ];
+      if (clip.hasRich) {
+        choices.push({
+          label: "Save styled copy…",
+          format: "html",
+          filterName: "HTML",
+          extensions: ["html"],
+        });
+      }
+      return choices;
+    }
+  }
+}
+
+/** The last segment of a path, for naming a file in a notice. */
+function fileNameOf(path: string): string {
+  return path.split(/[\\/]/).pop() || path;
+}
+
+/** The folder a file sits in. */
+function folderOf(path: string): string {
+  const cut = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return cut > 0 ? path.slice(0, cut) : "";
+}
+
+/** Joins a folder and a name using the separator that folder already has. */
+function joinPath(dir: string, name: string): string {
+  if (!dir) return name;
+  const separator = dir.includes("\\") ? "\\" : "/";
+  return `${dir.replace(/[\\/]+$/, "")}${separator}${name}`;
+}
+
+/** What a folder export says afterwards, vanished originals included. */
+function saveReportNotice(report: SaveReport, folder: string): string {
+  const files = `${report.written.length} file${report.written.length === 1 ? "" : "s"}`;
+  const missing =
+    report.missing.length > 0
+      ? ` ${report.missing.length} original${report.missing.length === 1 ? " was" : "s were"} no longer there.`
+      : "";
+  return `Saved ${files} to ${folder}.${missing}`;
+}
+
+/**
+ * Asks before a secret is written out.
+ *
+ * A saved secret is plain text on disk, which is the one thing the vault exists
+ * to prevent happening by accident.
+ */
+async function confirmSecretSave(clips: ClipSummary[]): Promise<boolean> {
+  const secrets = clips.filter((clip) => clip.secretLevel).length;
+  if (secrets === 0) return true;
+  const subject = secrets === 1 ? "This clip is" : `${secrets} of these clips are`;
+  return ask(`${subject} encrypted. Saving writes the plain text to disk, outside the vault.`, {
+    title: "Save a secret",
+    kind: "warning",
+    okLabel: "Save anyway",
+    cancelLabel: "Cancel",
+  });
+}
+
 function MainApp() {
   // The settings and add-clip windows load the same bundle and are identified by
   // their window label, so each starts on its own page and closes with its own
@@ -242,6 +371,23 @@ function MainApp() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * The one button the current notice carries, such as revealing a save. Keyed
+   * by the text it belongs to, so a later notice cannot inherit it.
+   */
+  const [noticeAction, setNoticeAction] = useState<{
+    text: string;
+    label: string;
+    run: () => void;
+  } | null>(null);
+  /** Raises a notice, with the single button it deserves when there is one. */
+  const announce = useCallback(
+    (text: string, action?: { label: string; run: () => void }) => {
+      setNotice(text);
+      setNoticeAction(action ? { text, ...action } : null);
+    },
+    [],
+  );
   const [error, setError] = useState<string | null>(null);
   /** Bumped after every mutation so derived data is re-fetched. */
   const [dataVersion, setDataVersion] = useState(0);
@@ -500,8 +646,14 @@ function MainApp() {
   const updater = useUpdater({
     enabled: settings?.autoUpdate ?? false,
     lastCheck: settings?.lastUpdateCheck ?? 0,
+    skippedVersion: settings?.skippedUpdateVersion ?? "",
     onChecked: markUpdateChecked,
     onNotice: setNotice,
+    // The launch check offers the release in its own window, which carries the
+    // notes and the three answers: update, skip, or be reminded next time.
+    onAutoUpdate: () => {
+      openWhatsNewWindow().catch((e) => setError(errorMessage(e)));
+    },
   });
 
   // ---- derived data -------------------------------------------------------
@@ -1372,24 +1524,93 @@ function MainApp() {
 
   // ---- payload actions ----------------------------------------------------
 
-  const saveAs = useCallback(async (clip: ClipSummary) => {
-    try {
-      const chosen = await openDialog({
-        directory: true,
-        multiple: false,
-        title: "Save this clip to a folder",
-      });
-      if (typeof chosen !== "string") return;
-      const written = await saveClip(clip.id, chosen);
-      setNotice(
-        written.length === 1
-          ? `Saved ${written[0].split(/[\\/]/).pop()}.`
-          : `Saved ${written.length} files to ${chosen}.`,
-      );
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, []);
+  /**
+   * Saves one clip to the file the user picks.
+   *
+   * The suggested name, the extension and the dialog's filter all come from the
+   * clip's shape, and the folder is remembered so a run of saves does not start
+   * from scratch every time.
+   */
+  const saveClipTo = useCallback(
+    async (clip: ClipSummary, choice: SaveChoice) => {
+      try {
+        if (!(await confirmSecretSave([clip]))) return;
+        const suggested = await suggestSaveName(clip.id, choice.format);
+        const chosen = await save({
+          title: choice.label.replace(/…$/, ""),
+          defaultPath: joinPath(settings?.lastSaveDir ?? "", suggested),
+          filters: [{ name: choice.filterName, extensions: choice.extensions }],
+        });
+        if (typeof chosen !== "string") return;
+        const written = await saveClipAs(clip.id, chosen, choice.format);
+        const folder = folderOf(written);
+        if (folder && folder !== settings?.lastSaveDir) {
+          void applyPatch({ lastSaveDir: folder });
+        }
+        // A secret leaving the vault is worth saying out loud: the file is the
+        // plaintext the database was protecting.
+        const caveat = clip.secretLevel ? " It is readable outside the vault now." : "";
+        announce(`Saved ${fileNameOf(written)}.${caveat}`, {
+          label: "Show folder",
+          run: () => void revealPath(written),
+        });
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    },
+    [announce, applyPatch, settings?.lastSaveDir],
+  );
+
+  /** Copies a file clip's originals into the folder the user picks. */
+  const saveFilesTo = useCallback(
+    async (clip: ClipSummary, into?: string) => {
+      try {
+        const chosen =
+          into ??
+          (await openDialog({
+            directory: true,
+            multiple: false,
+            title: "Copy this clip's files to a folder",
+          }));
+        if (typeof chosen !== "string") return;
+        const report = await saveClip(clip.id, chosen);
+        announce(saveReportNotice(report, chosen), {
+          label: "Show folder",
+          run: () => void revealPath(chosen),
+        });
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    },
+    [announce],
+  );
+
+  /**
+   * Saves a clip with no questions asked, into the folder the last save used.
+   * The backend picks the name, so a second save of the same clip lands beside
+   * the first rather than over it.
+   */
+  const saveClipQuickly = useCallback(
+    async (clip: ClipSummary) => {
+      const folder = settings?.lastSaveDir;
+      if (!folder) return;
+      if (clip.kind === "files") {
+        await saveFilesTo(clip, folder);
+        return;
+      }
+      try {
+        if (!(await confirmSecretSave([clip]))) return;
+        const report = await saveClip(clip.id, folder);
+        announce(saveReportNotice(report, folder), {
+          label: "Show folder",
+          run: () => void revealPath(folder),
+        });
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    },
+    [announce, saveFilesTo, settings?.lastSaveDir],
+  );
 
   const openLink = useCallback((url: string) => {
     openUrl(url).catch((e) => setError(errorMessage(e)));
@@ -2208,22 +2429,40 @@ function MainApp() {
     [bump, clearSelection, collections, includeArchived, picked, selectSurvivor, view],
   );
 
-  /** Exports the selection into a folder the user picks. */
-  const bulkExport = useCallback(async () => {
-    try {
-      const chosen = await openDialog({
-        directory: true,
-        multiple: false,
-        title: `Export ${picked.length} clips to a folder`,
-      });
-      if (typeof chosen !== "string") return;
-      const written = await saveClips(picked, chosen);
-      clearSelection();
-      setNotice(`Exported ${written.length} file${written.length === 1 ? "" : "s"}.`);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  }, [clearSelection, picked]);
+  /**
+   * Exports the selection into a folder.
+   *
+   * `byKind` files them under `Images`, `Text` and `Files`: a screenshot and a
+   * paragraph rarely belong in one heap. `into` skips the folder question when
+   * the last save already answered it.
+   */
+  const bulkExport = useCallback(
+    async (byKind = false, into?: string) => {
+      try {
+        const chosen =
+          into ??
+          (await openDialog({
+            directory: true,
+            multiple: false,
+            title: `Export ${picked.length} clips to a folder`,
+          }));
+        if (typeof chosen !== "string") return;
+        const chosenClips = picked
+          .map((id) => items.find((item) => item.id === id))
+          .filter((clip): clip is ClipSummary => clip !== undefined);
+        if (!(await confirmSecretSave(chosenClips))) return;
+        const report = await saveClips(picked, chosen, byKind);
+        clearSelection();
+        announce(saveReportNotice(report, chosen), {
+          label: "Show folder",
+          run: () => void revealPath(chosen),
+        });
+      } catch (e) {
+        setError(errorMessage(e));
+      }
+    },
+    [announce, clearSelection, items, picked],
+  );
 
   /**
    * Selects a clip and makes sure its properties pane is showing.
@@ -2287,10 +2526,22 @@ function MainApp() {
           onSelect: () => void addToStack(selection),
         });
         items.push({
-          label: `Save ${count} clips to…`,
+          label: `Save ${count} clips to folder…`,
           icon: <IconSave className="size-3" />,
-          onSelect: () => void bulkExport(),
+          onSelect: () => void bulkExport(false),
         });
+        items.push({
+          label: `Save ${count} clips by type…`,
+          icon: <IconSave className="size-3" />,
+          onSelect: () => void bulkExport(true),
+        });
+        if (settings?.lastSaveDir) {
+          items.push({
+            label: `Save ${count} clips to “${fileNameOf(settings.lastSaveDir)}”`,
+            icon: <IconSave className="size-3" />,
+            onSelect: () => void bulkExport(false, settings.lastSaveDir),
+          });
+        }
         if (canExportMarkdown) {
           items.push({
             label: `Export ${count} as Markdown`,
@@ -2571,18 +2822,53 @@ function MainApp() {
       }
 
       if (!single) {
-        items.push(
-          group({
-            label: "Save to folder…",
+        // What "save" means depends on what the clip holds, so the menu offers
+        // the shapes it actually has rather than one folder picker for all of
+        // them.
+        const choices = saveChoices(clip);
+        if (clip.kind === "files") {
+          items.push(
+            group({
+              label: "Copy files to folder…",
+              icon: <IconSave className="size-3" />,
+              onSelect: () => void saveFilesTo(clip),
+            }),
+          );
+        } else if (choices.length === 1) {
+          items.push(
+            group({
+              label: choices[0].label,
+              icon: <IconSave className="size-3" />,
+              onSelect: () => void saveClipTo(clip, choices[0]),
+            }),
+          );
+        } else {
+          items.push(
+            group({
+              label: "Save as…",
+              icon: <IconSave className="size-3" />,
+              onSelect: () => undefined,
+              submenu: choices.map((choice) => ({
+                label: choice.label,
+                onSelect: () => void saveClipTo(clip, choice),
+              })),
+            }),
+          );
+        }
+        // One click, using the folder the last save landed in and the name the
+        // backend would have suggested.
+        if (settings?.lastSaveDir) {
+          items.push({
+            label: `Save copy to “${fileNameOf(settings.lastSaveDir)}”`,
             icon: <IconSave className="size-3" />,
-            onSelect: () => void saveAs(clip),
-          }),
-          {
-            label: clip.pinned ? "Unpin" : "Pin",
-            icon: <IconPin className="size-3" filled={clip.pinned} />,
-            onSelect: () => void togglePin(clip),
-          },
-        );
+            onSelect: () => void saveClipQuickly(clip),
+          });
+        }
+        items.push({
+          label: clip.pinned ? "Unpin" : "Pin",
+          icon: <IconPin className="size-3" filled={clip.pinned} />,
+          onSelect: () => void togglePin(clip),
+        });
       }
 
       // Only text can be a secret, and only a text clip is worth marking.
@@ -2633,7 +2919,10 @@ function MainApp() {
       openLink,
       openStickyClipWindow,
       picked,
-      saveAs,
+      saveClipQuickly,
+      saveClipTo,
+      saveFilesTo,
+      settings?.lastSaveDir,
       showPath,
       showProperties,
       splitIntoStack,
@@ -2995,6 +3284,9 @@ function MainApp() {
   // under the preview overlay, which repeats the notice inside its own frame.
   const banner = error ?? settingsError ?? historyError;
   const info = !banner && route === "history" && previewId === null ? notice : null;
+  // Only the notice that raised the button gets to show it, so a later
+  // confirmation cannot inherit a "Show folder" pointing somewhere else.
+  const infoAction = info && noticeAction?.text === info ? noticeAction : null;
 
   // The stack panel belongs to the history page; moving to settings or back
   // should not leave it floating over the new page.
@@ -3002,12 +3294,13 @@ function MainApp() {
     setStackAnchor(null);
   }, [route]);
 
-  // Notices are confirmations, not state the user has to dismiss.
+  // Notices are confirmations, not state the user has to dismiss. One that
+  // carries a button stays a little longer, because there is something to click.
   useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 3_000);
+    const timer = window.setTimeout(() => setNotice(null), infoAction ? 9_000 : 3_000);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [notice, infoAction]);
 
   // ---- interface scale ----------------------------------------------------
   //
@@ -3027,6 +3320,16 @@ function MainApp() {
   // The add-clip window is a single small form: none of the history chrome, list
   // shortcuts or sidebar belong in it.
   if (route === "add-clip") return <AddClipForm />;
+
+  // The update window is the release notes and three answers. Skipping a version
+  // is remembered so the launch check stops offering it.
+  if (windowLabel === "whats-new") {
+    return (
+      <WhatsNewWindow
+        onSkip={(version) => void applyPatch({ skippedUpdateVersion: version })}
+      />
+    );
+  }
 
   // The stack's own window is the queue and nothing else, filling a frameless
   // always-on-top window the backend keeps above other applications.
@@ -3097,6 +3400,18 @@ function MainApp() {
             <span data-selectable className="min-w-0 flex-1">
               {banner ?? info}
             </span>
+            {infoAction && (
+              <button
+                type="button"
+                onClick={() => {
+                  infoAction.run();
+                  setNotice(null);
+                }}
+                className="shrink-0 underline underline-offset-2"
+              >
+                {infoAction.label}
+              </button>
+            )}
             {banner && (
               <button
                 type="button"
@@ -3127,6 +3442,16 @@ function MainApp() {
           className="flex shrink-0 items-center gap-2 border-b border-accent/30 bg-accent/10 px-3 py-1.5 text-[11px] text-accent-hi"
         >
           <span className="min-w-0 flex-1">Kept {updater.state.version} is available.</span>
+          <button
+            type="button"
+            onClick={() => {
+              updater.dismiss();
+              openWhatsNewWindow().catch((e) => setError(errorMessage(e)));
+            }}
+            className="shrink-0 underline underline-offset-2"
+          >
+            What&apos;s new
+          </button>
           <button
             type="button"
             onClick={() => void updater.install()}
@@ -3495,7 +3820,11 @@ function MainApp() {
                     onTagsCommit={(clip, next) => void commitTags(clip, next)}
                     onToggleSecret={(clip) => void toggleSecret(clip)}
                     onCollectionsChange={(clip, ids) => void commitCollections(clip, ids)}
-                    onSaveAs={(clip) => void saveAs(clip)}
+                    onSaveAs={(clip) => {
+                      const choices = saveChoices(clip);
+                      if (clip.kind === "files") void saveFilesTo(clip);
+                      else void saveClipTo(clip, choices[0]);
+                    }}
                     onExportMarkdown={(clip) => void exportNotes([clip.id])}
                     onOpenUrl={openLink}
                     onOpenEmail={openEmailClient}

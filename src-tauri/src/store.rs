@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::Serialize;
 
 use crate::crypto::{Cipher, load_master_key};
 use crate::error::{AppError, Result};
@@ -51,6 +52,56 @@ const SEARCH_BODY_LIMIT: i64 = 256 * 1024;
 
 /// Upper bound for a clip note. Notes are annotations, not payloads.
 pub const MAX_NOTE_CHARS: usize = 4_000;
+
+/// Said whenever a save needs pixels or text the locked vault cannot decrypt.
+const UNLOCK_TO_SAVE: &str = "this clip is encrypted; unlock the vault to save it";
+
+/// What a saved clip is written as.
+///
+/// The format follows the clip's shape rather than being guessed at the last
+/// moment: a link becomes a shortcut, a colour a CSS custom property, a moving
+/// clip its own GIF or video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveFormat {
+    Text,
+    Markdown,
+    Html,
+    Css,
+    Url,
+    Json,
+    Image,
+    Motion,
+}
+
+impl SaveFormat {
+    pub fn parse(raw: &str) -> Result<Self> {
+        Ok(match raw {
+            "text" => Self::Text,
+            "markdown" => Self::Markdown,
+            "html" => Self::Html,
+            "css" => Self::Css,
+            "url" => Self::Url,
+            "json" => Self::Json,
+            "image" => Self::Image,
+            "motion" => Self::Motion,
+            other => return Err(AppError::msg(format!("unknown save format `{other}`"))),
+        })
+    }
+}
+
+/// The files a save wrote, and the file-clip originals that were no longer there.
+#[derive(Debug, Default, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveReport {
+    pub written: Vec<String>,
+    pub missing: Vec<String>,
+}
+
+impl SaveReport {
+    fn push_written(&mut self, path: &Path) {
+        self.written.push(path.to_string_lossy().into_owned());
+    }
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -724,6 +775,7 @@ impl Store {
             secret_level: row.secret_level.clone(),
             face_count: row.face_count,
             url_cleaned: row.original_url.is_some(),
+            has_rich: row.html.is_some() || row.rtf.is_some(),
         };
 
         Ok(IndexedClip {
@@ -904,7 +956,6 @@ impl Store {
             file_paths,
             ocr_text,
             note,
-            has_rich: row.html.is_some() || row.rtf.is_some(),
             uncleaned_url: row.original_url,
         })
     }
@@ -1942,21 +1993,45 @@ impl Store {
         Ok(ids.len())
     }
 
-    /// Exports several clips into one folder, returning everything that was written.
-    pub fn save_clips(&self, ids: &[i64], dir: &Path) -> Result<Vec<String>> {
+    /// Exports several clips into one folder.
+    ///
+    /// `by_kind` sorts them into `Images`, `Text` and `Files` subfolders, which is
+    /// what a mixed selection wants: a screenshot and a paragraph rarely belong
+    /// side by side.
+    pub fn save_clips(&self, ids: &[i64], dir: &Path, by_kind: bool) -> Result<SaveReport> {
         std::fs::create_dir_all(dir)?;
-        let mut written: Vec<String> = Vec::new();
+        let mut report = SaveReport::default();
         for id in ids {
-            match self.save_clip(*id, dir) {
-                Ok(paths) => written.extend(paths),
+            let target = if by_kind {
+                let sub = dir.join(kind_folder(self.clip_kind(*id)));
+                std::fs::create_dir_all(&sub)?;
+                sub
+            } else {
+                dir.to_path_buf()
+            };
+            match self.save_clip(*id, &target) {
+                Ok(part) => {
+                    report.written.extend(part.written);
+                    report.missing.extend(part.missing);
+                }
                 // One unreadable clip should not abort the rest of the export.
                 Err(e) => log::warn!("could not export clip {id}: {e}"),
             }
         }
-        if written.is_empty() && !ids.is_empty() {
+        if report.written.is_empty() && !ids.is_empty() {
             return Err(AppError::msg("nothing could be exported from that selection"));
         }
-        Ok(written)
+        Ok(report)
+    }
+
+    /// The kind of a clip, for choosing the folder a sorted export puts it in.
+    fn clip_kind(&self, id: i64) -> ClipKind {
+        self.state
+            .read()
+            .clips
+            .get(&id)
+            .map(|entry| entry.summary.kind)
+            .unwrap_or(ClipKind::Files)
     }
 
     /// Writes one Markdown note per text clip, counting the clips that have no
@@ -2593,30 +2668,43 @@ impl Store {
     }
 
     /// Copies a clip's payload into a folder the user picked, so it stops living
-    /// only inside the encrypted database. Returns the paths that were written.
-    pub fn save_clip(&self, id: i64, dir: &Path) -> Result<Vec<String>> {
+    /// only inside the encrypted database.
+    ///
+    /// What lands there follows what the clip is: a picture keeps its moving
+    /// asset rather than the still frame, and a file clip reports the originals
+    /// that have gone instead of failing the whole export.
+    pub fn save_clip(&self, id: i64, dir: &Path) -> Result<SaveReport> {
         std::fs::create_dir_all(dir)?;
-        let row = {
-            let conn = self.conn.lock();
-            load_clip_row(&conn, id)?
-        }
-        .ok_or_else(|| AppError::NotFound(format!("clip {id}")))?;
+        let row = self.clip_row(id)?;
+        let mut report = SaveReport::default();
 
-        let mut written: Vec<String> = Vec::new();
         match row.kind {
             ClipKind::Image => {
-                let name = row
-                    .image_path
-                    .ok_or_else(|| AppError::msg("this image has no stored file"))?;
-                let source = self.media_dir.join(&name);
+                // The moving asset is what a GIF or video clip actually is; the
+                // still frame is only what the card draws.
+                let (name, bytes) = match self.motion_source(id) {
+                    Some((kind, asset)) => (
+                        self.save_name(&row, Some(kind))?,
+                        self.media_bytes(&asset),
+                    ),
+                    None => {
+                        let stored = row
+                            .image_path
+                            .clone()
+                            .ok_or_else(|| AppError::msg("this image has no stored file"))?;
+                        (self.save_name(&row, None)?, self.media_bytes(&stored))
+                    }
+                };
+                let bytes = bytes?.ok_or_else(|| AppError::msg(UNLOCK_TO_SAVE))?;
                 let target = unique_path(dir, &name);
-                std::fs::copy(&source, &target)?;
-                written.push(target.to_string_lossy().into_owned());
+                std::fs::write(&target, bytes)?;
+                report.push_written(&target);
             }
             ClipKind::Files => {
                 for path in self.files_for_row(&row)? {
                     let source = PathBuf::from(&path);
                     if !source.is_file() {
+                        report.missing.push(path);
                         continue;
                     }
                     let name = source
@@ -2625,31 +2713,164 @@ impl Store {
                         .unwrap_or_else(|| "file".to_string());
                     let target = unique_path(dir, &name);
                     std::fs::copy(&source, &target)?;
-                    written.push(target.to_string_lossy().into_owned());
+                    report.push_written(&target);
                 }
-                if written.is_empty() {
+                if report.written.is_empty() {
                     return Err(AppError::msg("the original files no longer exist"));
                 }
             }
             ClipKind::Text => {
-                let text = self.body_text(&row).unwrap_or_default();
-                let stem = file_stem_suggestion(&text);
-                let target = unique_path(dir, &format!("{stem}.txt"));
-                std::fs::write(&target, &text)?;
-                written.push(target.to_string_lossy().into_owned());
-                // Keeping the styled version next to the plain one costs nothing
-                // and is the only way a saved clip keeps its formatting.
-                let vault = self.vault_key();
-                if let Some(html) = vault_text(vault.as_ref(), &row.html, &row.html_nonce)
-                    && !html.trim().is_empty()
-                {
-                    let target = unique_path(dir, &format!("{stem}.html"));
-                    std::fs::write(&target, html)?;
-                    written.push(target.to_string_lossy().into_owned());
-                }
+                // The extension follows the payload, so a link lands as a
+                // shortcut a double-click opens rather than a stray text file.
+                let body = self.readable_body(&row)?;
+                let payload = self.text_payload(&row, &body, text_format(&body))?;
+                let target = unique_path(dir, &self.save_name(&row, None)?);
+                std::fs::write(&target, payload)?;
+                report.push_written(&target);
             }
         }
-        Ok(written)
+        Ok(report)
+    }
+
+    /// Writes one clip to the exact file a "Save as…" dialog returned.
+    ///
+    /// The format comes from the clip's shape, which the interface chose before
+    /// the dialog: a link becomes a shortcut, a colour a CSS custom property, a
+    /// moving clip its own GIF or video.
+    pub fn save_clip_as(&self, id: i64, path: &Path, format: SaveFormat) -> Result<String> {
+        let row = self.clip_row(id)?;
+        match row.kind {
+            ClipKind::Files => {
+                return Err(AppError::msg(
+                    "a file clip is saved by copying its files into a folder",
+                ));
+            }
+            ClipKind::Image => {
+                let mut name = row
+                    .image_path
+                    .clone()
+                    .ok_or_else(|| AppError::msg("this image has no stored file"))?;
+                if format == SaveFormat::Motion {
+                    let (_, asset) = self
+                        .motion_source(id)
+                        .ok_or_else(|| AppError::msg("this clip has no moving image"))?;
+                    name = asset;
+                }
+                let bytes = self
+                    .media_bytes(&name)?
+                    .ok_or_else(|| AppError::msg(UNLOCK_TO_SAVE))?;
+                std::fs::write(path, bytes)?;
+            }
+            ClipKind::Text => {
+                let body = self.readable_body(&row)?;
+                let text = self.text_payload(&row, &body, format)?;
+                std::fs::write(path, text)?;
+            }
+        }
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// The bytes a text clip becomes in a given format.
+    fn text_payload(&self, row: &ClipRow, body: &str, format: SaveFormat) -> Result<String> {
+        Ok(match format {
+            SaveFormat::Text | SaveFormat::Markdown | SaveFormat::Json => body.to_string(),
+            SaveFormat::Url => internet_shortcut(body),
+            SaveFormat::Css => css_snippet(body),
+            SaveFormat::Html => self.rich_html(row).unwrap_or_else(|| html_document(body)),
+            SaveFormat::Image | SaveFormat::Motion => {
+                return Err(AppError::msg("this clip holds text, not an image"));
+            }
+        })
+    }
+
+    /// The name a "Save as…" dialog should offer, extension included.
+    pub fn suggest_save_name(&self, id: i64, format: SaveFormat) -> Result<String> {
+        let row = self.clip_row(id)?;
+        let moving = (format == SaveFormat::Motion)
+            .then(|| self.motion_source(id))
+            .flatten()
+            .map(|(kind, _)| kind);
+        self.save_name(&row, moving)
+    }
+
+    /// File name for a clip. `moving` names the recovered asset's format when a
+    /// GIF or video is what is being written, because its extension is the
+    /// asset's, not the still frame's.
+    fn save_name(
+        &self,
+        row: &ClipRow,
+        moving: Option<crate::animated::MotionKind>,
+    ) -> Result<String> {
+        if row.kind == ClipKind::Image {
+            let extension = moving
+                .map(crate::animated::MotionKind::extension)
+                .unwrap_or("png");
+            return Ok(format!("capture-{}.{extension}", file_stamp(row.created_at)));
+        }
+        if row.kind == ClipKind::Files {
+            let first = self
+                .files_for_row(row)?
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "files".to_string());
+            let name = Path::new(&first)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "files".to_string());
+            return Ok(name);
+        }
+
+        let text = self.readable_body(row)?;
+        let kind = crate::color::classify(&text);
+        let (stem, extension) = match kind {
+            Some(crate::color::ContentKind::Color) => {
+                let hex = crate::color::parse(&text).unwrap_or(text.clone());
+                (hex.trim_start_matches('#').to_string(), "txt")
+            }
+            Some(crate::color::ContentKind::Url) => (url_stem(&text), "url"),
+            Some(crate::color::ContentKind::Json) => {
+                (format!("json-{}", file_stamp(row.created_at)), "json")
+            }
+            Some(crate::color::ContentKind::Markdown) => (file_stem_suggestion(&text), "md"),
+            _ => (file_stem_suggestion(&text), "txt"),
+        };
+        Ok(format!("{stem}.{extension}"))
+    }
+
+    /// A clip's row, or the not-found error every save path starts with.
+    fn clip_row(&self, id: i64) -> Result<ClipRow> {
+        let row = {
+            let conn = self.conn.lock();
+            load_clip_row(&conn, id)?
+        };
+        row.ok_or_else(|| AppError::NotFound(format!("clip {id}")))
+    }
+
+    /// The clip's text, refusing a sealed one the open vault cannot decrypt.
+    ///
+    /// Writing an empty file for a locked secret would look like a successful
+    /// save, so this says what actually happened.
+    fn readable_body(&self, row: &ClipRow) -> Result<String> {
+        match self.body_text(row) {
+            Some(text) => Ok(text),
+            None if is_sealed(row) => Err(AppError::msg(UNLOCK_TO_SAVE)),
+            None => Ok(String::new()),
+        }
+    }
+
+    /// The HTML/RTF styling captured with a text clip, when there is any.
+    fn rich_html(&self, row: &ClipRow) -> Option<String> {
+        let vault = self.vault_key();
+        vault_text(vault.as_ref(), &row.html, &row.html_nonce)
+            .filter(|html| !html.trim().is_empty())
+    }
+
+    /// The moving asset's file name on disk, with the kind it is.
+    fn motion_source(&self, id: i64) -> Option<(crate::animated::MotionKind, String)> {
+        self.motion(id).and_then(|(kind, path)| {
+            path.file_name()
+                .map(|name| (kind, name.to_string_lossy().into_owned()))
+        })
     }
 
     pub fn rename_collection(&self, id: i64, name: &str) -> Result<()> {
@@ -3350,6 +3571,90 @@ fn now_ms() -> i64 {
 }
 
 /// A path in `dir` that does not exist yet, appending " (2)", " (3)" … as needed.
+/// What a text payload is, as far as saving it is concerned.
+fn text_format(text: &str) -> SaveFormat {
+    match crate::color::classify(text) {
+        Some(crate::color::ContentKind::Url) => SaveFormat::Url,
+        Some(crate::color::ContentKind::Json) => SaveFormat::Json,
+        Some(crate::color::ContentKind::Markdown) => SaveFormat::Markdown,
+        _ => SaveFormat::Text,
+    }
+}
+
+/// The body of a Windows `.url` shortcut, so a saved link opens in a browser
+/// with a double-click instead of landing in Notepad.
+fn internet_shortcut(url: &str) -> String {
+    format!("[InternetShortcut]\r\nURL={}\r\n", url.trim())
+}
+
+/// A colour as a custom property, ready to paste into a stylesheet.
+fn css_snippet(text: &str) -> String {
+    let hex = crate::color::parse(text).unwrap_or_else(|| text.trim().to_string());
+    format!(":root {{\n  --color: {hex};\n}}\n")
+}
+
+/// A styled copy is normally the captured HTML. A clip that had none still gets
+/// a document, so choosing that format is never a dead end.
+fn html_document(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            c => escaped.push(c),
+        }
+    }
+    format!(
+        "<!doctype html>\n<html>\n<head><meta charset=\"utf-8\"><title>Kept clip</title></head>\n\
+         <body>\n<pre>{escaped}</pre>\n</body>\n</html>\n"
+    )
+}
+
+/// A file-name stem for a link: its host and path, with anything Windows refuses
+/// in a name replaced by a dash.
+fn url_stem(url: &str) -> String {
+    let without_scheme = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let path = without_scheme.split(['?', '#']).next().unwrap_or_default();
+    let stem: String = path
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .take(60)
+        .collect();
+    let stem = stem.trim_matches('-').trim_end_matches('.').to_string();
+    if stem.is_empty() {
+        "link".to_string()
+    } else {
+        stem
+    }
+}
+
+/// Subfolder a sorted export gives each kind of clip.
+fn kind_folder(kind: ClipKind) -> &'static str {
+    match kind {
+        ClipKind::Image => "Images",
+        ClipKind::Text => "Text",
+        ClipKind::Files => "Files",
+    }
+}
+
+/// Local creation time in a form that sorts and survives every file system.
+fn file_stamp(ms: i64) -> String {
+    let time = match chrono::DateTime::from_timestamp_millis(ms) {
+        Some(utc) => utc.with_timezone(&chrono::Local),
+        None => chrono::DateTime::UNIX_EPOCH.with_timezone(&chrono::Local),
+    };
+    time.format("%Y-%m-%d-%H%M%S").to_string()
+}
+
 pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
@@ -4820,7 +5125,7 @@ mod tests {
         assert_eq!(detail.text.as_deref(), Some("edited wording"));
         assert_eq!(detail.summary.preview, "edited wording");
         assert_eq!(detail.summary.char_count, 14);
-        assert!(!detail.has_rich, "stale rich flavours are dropped");
+        assert!(!detail.summary.has_rich, "stale rich flavours are dropped");
         assert_eq!(store.list(&ClipFilter::default(), "edited", 10, 0).total, 1);
         assert_eq!(store.list(&ClipFilter::default(), "original", 10, 0).total, 0);
     }
@@ -6704,7 +7009,7 @@ mod tests {
         let rich = store.rich_text(id).unwrap();
         assert_eq!(rich.html.as_deref(), Some("<b>bold</b>"));
         assert_eq!(rich.rtf.as_deref(), Some(r"{\rtf1\b bold}"));
-        assert!(store.detail(id).unwrap().has_rich);
+        assert!(store.detail(id).unwrap().summary.has_rich);
 
         // The plain body is still there, so a rich-unaware target still works.
         assert_eq!(store.text_content(id).unwrap().as_deref(), Some("<b>bold</b>"));
@@ -6714,7 +7019,7 @@ mod tests {
             _ => unreachable!(),
         };
         assert!(store.rich_text(plain).unwrap().html.is_none());
-        assert!(!store.detail(plain).unwrap().has_rich);
+        assert!(!store.detail(plain).unwrap().summary.has_rich);
     }
 
     #[test]
@@ -6798,7 +7103,7 @@ mod tests {
             InsertOutcome::Inserted(id) => id,
             _ => unreachable!(),
         };
-        let written = store.save_clip(text, out.path()).unwrap();
+        let written = store.save_clip(text, out.path()).unwrap().written;
         assert_eq!(written.len(), 1);
         assert!(written[0].ends_with("Quarterly report.txt"));
         assert_eq!(
@@ -6807,17 +7112,153 @@ mod tests {
         );
 
         // Saving the same clip again must not overwrite the first file.
-        let again = store.save_clip(text, out.path()).unwrap();
+        let again = store.save_clip(text, out.path()).unwrap().written;
         assert_ne!(again[0], written[0]);
         assert!(again[0].ends_with("Quarterly report (2).txt"));
 
+        // A picture is named after when it was captured, not after the hash of
+        // its stored file.
         let image = match store.insert_clip(image_clip(3, 3, 5)).unwrap() {
             InsertOutcome::Inserted(id) => id,
             _ => unreachable!(),
         };
-        let written = store.save_clip(image, out.path()).unwrap();
+        let written = store.save_clip(image, out.path()).unwrap().written;
         assert!(written[0].ends_with(".png"));
+        let name = std::path::Path::new(&written[0])
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(name.starts_with("capture-"), "{name} should carry its date");
         assert!(std::path::Path::new(&written[0]).is_file());
+    }
+
+    #[test]
+    fn a_moving_clip_saves_its_gif_rather_than_the_still_frame() {
+        let (store, _dir) = test_store();
+        let out = tempfile::tempdir().unwrap();
+        let id = match store.insert_clip(image_clip(3, 3, 11)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        store
+            .attach_motion(id, crate::animated::MotionKind::Gif, b"GIF89a demo")
+            .unwrap();
+
+        let written = store.save_clip(id, out.path()).unwrap().written;
+        assert_eq!(written.len(), 1);
+        assert!(
+            written[0].ends_with(".gif"),
+            "the still frame is an implementation detail"
+        );
+        assert_eq!(std::fs::read(&written[0]).unwrap(), b"GIF89a demo");
+        assert_eq!(
+            store
+                .suggest_save_name(id, SaveFormat::Motion)
+                .unwrap()
+                .rsplit_once('.')
+                .unwrap()
+                .1,
+            "gif"
+        );
+    }
+
+    #[test]
+    fn a_link_saves_as_a_shortcut_and_a_color_as_css() {
+        let (store, _dir) = test_store();
+        let out = tempfile::tempdir().unwrap();
+
+        let link = match store
+            .insert_clip(unique_text_clip("https://github.com/kept/app/releases"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            store.suggest_save_name(link, SaveFormat::Url).unwrap(),
+            "github.com-kept-app-releases.url"
+        );
+        let target = out.path().join("link.url");
+        store.save_clip_as(link, &target, SaveFormat::Url).unwrap();
+        let shortcut = std::fs::read_to_string(&target).unwrap();
+        assert!(shortcut.contains("[InternetShortcut]"));
+        assert!(shortcut.contains("URL=https://github.com/kept/app/releases"));
+
+        let color = match store.insert_clip(unique_text_clip("#E0992D")).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            store.suggest_save_name(color, SaveFormat::Text).unwrap(),
+            "e0992d.txt"
+        );
+        let target = out.path().join("color.css");
+        store.save_clip_as(color, &target, SaveFormat::Css).unwrap();
+        assert!(std::fs::read_to_string(&target).unwrap().contains("--color: #e0992d;"));
+    }
+
+    #[test]
+    fn save_as_writes_the_exact_path_it_is_given() {
+        let (store, _dir) = test_store();
+        let out = tempfile::tempdir().unwrap();
+        let id = match store.insert_clip(unique_text_clip("chosen name")).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        let target = out.path().join("my own name.md");
+        store.save_clip_as(id, &target, SaveFormat::Markdown).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "chosen name");
+    }
+
+    #[test]
+    fn a_file_clip_reports_the_originals_it_could_not_copy() {
+        let (store, _dir) = test_store();
+        let out = tempfile::tempdir().unwrap();
+        let present = out.path().join("here.txt");
+        std::fs::write(&present, "x").unwrap();
+        let gone = out.path().join("gone.txt");
+
+        let id = match store
+            .insert_clip(files_clip(&[
+                &present.to_string_lossy(),
+                &gone.to_string_lossy(),
+            ]))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        let into = tempfile::tempdir().unwrap();
+        let report = store.save_clip(id, into.path()).unwrap();
+        assert_eq!(report.written.len(), 1, "the file that still exists is copied");
+        assert_eq!(report.missing.len(), 1, "and the one that went is reported");
+        assert!(report.missing[0].ends_with("gone.txt"));
+    }
+
+    #[test]
+    fn a_sorted_export_files_clips_into_kind_folders() {
+        let (store, _dir) = test_store();
+        let out = tempfile::tempdir().unwrap();
+        let text = match store.insert_clip(unique_text_clip("note")).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        let image = match store.insert_clip(image_clip(2, 2, 3)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+
+        let report = store.save_clips(&[text, image], out.path(), true).unwrap();
+        assert_eq!(report.written.len(), 2);
+        assert!(out.path().join("Text").join("note.txt").is_file());
+        assert!(
+            out.path()
+                .join("Images")
+                .read_dir()
+                .unwrap()
+                .any(|entry| entry.unwrap().path().extension().unwrap() == "png")
+        );
     }
 
     #[test]
@@ -6894,11 +7335,14 @@ mod tests {
             })
             .collect();
 
-        let written = store.save_clips(&ids, out.path()).unwrap();
+        let written = store.save_clips(&ids, out.path(), false).unwrap().written;
         assert_eq!(written.len(), 3);
         assert!(written.iter().all(|path| std::path::Path::new(path).is_file()));
-        assert_eq!(store.save_clips(&[], out.path()).unwrap().len(), 0);
-        assert!(store.save_clips(&[9_999], out.path()).is_err());
+        assert_eq!(
+            store.save_clips(&[], out.path(), false).unwrap().written.len(),
+            0
+        );
+        assert!(store.save_clips(&[9_999], out.path(), false).is_err());
     }
 
     #[test]

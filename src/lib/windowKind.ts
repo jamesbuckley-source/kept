@@ -19,6 +19,7 @@ export type WindowKind =
   | "settings"
   | "add-clip"
   | "wizard"
+  | "whats-new"
   | "sticky"
   | "record-bar"
   | "record-area"
@@ -30,6 +31,7 @@ export function windowKind(): WindowKind {
   const fromUrl = new URLSearchParams(window.location.search).get("window");
   if (fromUrl === "settings" || fromUrl === "add-clip" || fromUrl === "sticky") return fromUrl;
   if (fromUrl === "wizard") return fromUrl;
+  if (fromUrl === "whats-new") return fromUrl;
   if (fromUrl === "record-bar" || fromUrl === "record-area" || fromUrl === "countdown") {
     return fromUrl;
   }
@@ -40,6 +42,7 @@ export function windowKind(): WindowKind {
     const label = getCurrentWindow().label;
     if (label === "settings" || label === "add-clip" || label === "stack") return label;
     if (label === "wizard") return label;
+    if (label === "whats-new") return label;
     if (label === "record-bar" || label === "record-area" || label === "countdown") return label;
     if (label === "quick") return label;
     if (label.startsWith("sticky-")) return "sticky";

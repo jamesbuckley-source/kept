@@ -167,6 +167,9 @@ pub struct ClipSummary {
     /// True when this link was stored after tracking parameters were stripped, so
     /// the menu can offer "Copy uncleaned URL".
     pub url_cleaned: bool,
+    /// True when a text clip carries HTML/RTF captured next to its plain text, so
+    /// "Save styled copy…" is worth offering.
+    pub has_rich: bool,
 }
 
 /// A summary plus the payload needed to actually use the clip.
@@ -183,8 +186,6 @@ pub struct ClipDetail {
     pub ocr_text: Option<String>,
     /// A free-form note the user attached to the clip.
     pub note: Option<String>,
-    /// True when the clip carries HTML/RTF captured next to its plain text.
-    pub has_rich: bool,
     /// The link exactly as it was copied, when tracking parameters were stripped
     /// from it. This is what "Copy uncleaned URL" hands back.
     pub uncleaned_url: Option<String>,

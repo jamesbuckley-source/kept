@@ -24,6 +24,7 @@ import {
   recordToolchain,
   revealErrorLog,
   storageInfo,
+  storageCloudService,
   validateHotkey,
   setStorageDir,
 } from "../lib/ipc";
@@ -41,6 +42,8 @@ import {
 } from "../lib/types";
 import type { UpdateState } from "../hooks/useUpdater";
 import { CaptureModeField } from "./CaptureModeField";
+import { KeptMark } from "./KeptMark";
+import { ReleaseNotesFrame } from "./ReleaseNotesFrame";
 import { IconChevronRight, IconClose, IconSearch } from "./icons";
 
 interface SettingsPanelProps {
@@ -972,6 +975,10 @@ export function SettingsPanel({
   const [query, setQuery] = useState("");
   const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [pendingMove, setPendingMove] = useState<string | null>(null);
+  /** Sync service that owns the pending folder, when one does. */
+  const [pendingCloud, setPendingCloud] = useState<string | null>(null);
+  /** Whether the release-notes page is open under the About section. */
+  const [notesOpen, setNotesOpen] = useState(false);
   const [moving, setMoving] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [markdownError, setMarkdownError] = useState<string | null>(null);
@@ -1091,6 +1098,10 @@ export function SettingsPanel({
       });
       if (typeof picked === "string") {
         setStorageError(null);
+        // A live database inside a sync folder is the one thing worth asking
+        // about before it is copied there, so the confirm row gains a warning.
+        const cloud = await storageCloudService(picked).catch(() => null);
+        setPendingCloud(cloud);
         setPendingMove(picked);
       }
     } catch (e) {
@@ -1174,6 +1185,7 @@ export function SettingsPanel({
       setStorageError(errorMessage(e));
       setMoving(false);
       setPendingMove(null);
+      setPendingCloud(null);
     }
   };
 
@@ -1187,6 +1199,16 @@ export function SettingsPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-edge bg-panel px-4 py-2.5">
+        <KeptMark className="h-6 w-auto shrink-0 text-ink" />
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold tracking-wide text-ink">Kept</p>
+          <p className="truncate text-[10px] text-ink-faint">
+            Settings{appVersion ? ` · v${appVersion}` : ""}
+          </p>
+        </div>
+      </div>
+
       <SettingsSearch value={query} onChange={setQuery} />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1315,6 +1337,35 @@ export function SettingsPanel({
                 </button>
               }
             />
+            <Row
+              label="Latest updates"
+              hint={
+                updateState.kind === "available"
+                  ? `Kept ${updateState.version} is waiting to be installed; its notes are below.`
+                  : "Read the release notes here instead of leaving for GitHub."
+              }
+              control={
+                <button
+                  type="button"
+                  onClick={() => setNotesOpen((open) => !open)}
+                  aria-expanded={notesOpen}
+                  className="rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink"
+                >
+                  {notesOpen ? "Hide latest updates" : "Show latest updates"}
+                </button>
+              }
+            />
+            {notesOpen && (
+              <div className="pb-2">
+                <ReleaseNotesFrame
+                  version={
+                    updateState.kind === "available" ? updateState.version : appVersion
+                  }
+                  notes={updateState.kind === "available" ? updateState.notes : null}
+                  className="h-[380px] w-full rounded border border-edge bg-canvas"
+                />
+              </div>
+            )}
           </Section>
 
           <Section
@@ -2724,19 +2775,47 @@ export function SettingsPanel({
               }
             />
 
+            {storage?.cloud && (
+              <Row
+                label={`This folder is synced by ${storage.cloud}`}
+                hint="A live database here can be locked or corrupted while the client copies it. Move it somewhere local unless you have to keep it here."
+                control={
+                  <button
+                    type="button"
+                    onClick={() => void chooseStorage()}
+                    disabled={moving}
+                    className="rounded border border-danger/50 bg-danger/15 px-2.5 py-1 text-[11px] text-danger transition-colors hover:bg-danger/25 disabled:opacity-40"
+                  >
+                    Move it…
+                  </button>
+                }
+              />
+            )}
+
             {pendingMove && (
               <Row
                 label={
-                  storage?.custom && pendingMove === storage.defaultDir
-                    ? "Move back to the default folder?"
-                    : "Move the clips to this folder?"
+                  pendingCloud
+                    ? `Use a ${pendingCloud} folder anyway?`
+                    : storage?.custom && pendingMove === storage.defaultDir
+                      ? "Move back to the default folder?"
+                      : "Move the clips to this folder?"
                 }
-                hint={moving ? "Copying clips and restarting…" : pendingMove}
+                hint={
+                  moving
+                    ? "Copying clips and restarting…"
+                    : pendingCloud
+                      ? `${pendingMove} — ${pendingCloud} copies files while Kept is writing them, which can lock or corrupt the database.`
+                      : pendingMove
+                }
                 control={
                   <div className="flex gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setPendingMove(null)}
+                      onClick={() => {
+                        setPendingMove(null);
+                        setPendingCloud(null);
+                      }}
                       disabled={moving}
                       className="rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
                     >
@@ -2746,9 +2825,13 @@ export function SettingsPanel({
                       type="button"
                       onClick={() => void runMove(pendingMove)}
                       disabled={moving}
-                      className="rounded border border-accent-dim bg-accent/20 px-2.5 py-1 text-[11px] text-accent-hi transition-colors hover:bg-accent/30 disabled:opacity-40"
+                      className={`rounded border px-2.5 py-1 text-[11px] transition-colors disabled:opacity-40 ${
+                        pendingCloud
+                          ? "border-danger/50 bg-danger/15 text-danger hover:bg-danger/25"
+                          : "border-accent-dim bg-accent/20 text-accent-hi hover:bg-accent/30"
+                      }`}
                     >
-                      Move &amp; restart
+                      {pendingCloud ? "Use it anyway" : "Move & restart"}
                     </button>
                   </div>
                 }

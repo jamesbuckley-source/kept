@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>What's new in Kept</title>
+    <style>
+      /* This page is embedded by the update window, and also opens on its own in
+         a browser, so it carries its own palette rather than inheriting one. */
+      :root {
+        color-scheme: dark;
+        --canvas: #0b0e14;
+        --panel: #12161f;
+        --panel-2: #181d29;
+        --edge: #252c3b;
+        --ink: #e7eaf0;
+        --ink-dim: #99a3b5;
+        --ink-faint: #6a7488;
+        --accent: #6d8cff;
+        --accent-hi: #8aa2ff;
+        --amber: #e0992d;
+        --ok: #4ade80;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      /* Matches the panel it is embedded in, rather than the browser's default. */
+      html { scrollbar-color: #33405a transparent; scrollbar-width: thin; }
+
+      body { padding: 20px 22px 26px; }
+
+      header.page-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--edge);
+      }
+
+      .logo { display: flex; align-items: center; gap: 10px; }
+      .logo svg { height: 30px; width: auto; display: block; }
+      .logo .word {
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+      }
+
+      .head-links {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 11px;
+        color: var(--ink-faint);
+      }
+
+      .head-links a {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--ink-dim);
+        text-decoration: none;
+        border: 1px solid var(--edge);
+        border-radius: 999px;
+        padding: 4px 10px;
+      }
+
+      .head-links a:hover { color: var(--ink); border-color: #33405a; }
+
+      .version {
+        border: 1px solid rgba(109, 140, 255, 0.35);
+        background: rgba(109, 140, 255, 0.14);
+        color: var(--accent-hi);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-weight: 600;
+      }
+
+      h2.title {
+        margin: 18px 0 4px;
+        font-size: 17px;
+        font-weight: 650;
+      }
+
+      p.lede {
+        margin: 0 0 16px;
+        color: var(--ink-dim);
+      }
+
+      ul.features {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+
+      li.feature {
+        border: 1px solid var(--edge);
+        background: var(--panel);
+        border-radius: 10px;
+        padding: 12px 14px;
+        display: flex;
+        gap: 12px;
+      }
+
+      li.feature .glyph {
+        flex: none;
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        background: var(--panel-2);
+        border: 1px solid var(--edge);
+        font-size: 14px;
+      }
+
+      li.feature h3 {
+        margin: 0 0 3px;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      li.feature p {
+        margin: 0;
+        color: var(--ink-dim);
+        font-size: 12px;
+      }
+
+      li.feature code {
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 11px;
+        background: var(--panel-2);
+        border: 1px solid var(--edge);
+        border-radius: 4px;
+        padding: 0 4px;
+      }
+
+      li.feature ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink-dim); font-size: 12px; }
+
+      footer.page-foot {
+        margin-top: 18px;
+        color: var(--ink-faint);
+        font-size: 11px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="page-head">
+      <div class="logo">
+        <svg viewBox="0 0 77.7258 63.1646" aria-label="Kept">
+          <path fill="#0F0F0F" stroke="#e7eaf0" stroke-width="1.4" d="M11.7887 48.6654C12.4181 50.3038 14.0073 51.468 15.8662 51.468L62.6196 51.468C65.0295 51.468 66.986 49.5115 66.986 47.102L66.986 38.9092C67.014 38.9092 67.0369 38.932 67.0369 38.96L67.0369 23.4051C67.0369 22.3172 67.3478 21.2743 67.9017 20.5053C68.4556 19.736 69.2068 19.3042 69.9901 19.3042L75.1187 19.3042C75.81 19.3042 76.4729 19.6855 76.962 20.3645C77.451 21.0432 77.7258 21.9639 77.7258 22.9242L77.7258 59.1838C77.7258 60.2259 77.4276 61.2255 76.8966 61.9627C76.3661 62.6998 75.6459 63.1137 74.8956 63.1137L67.0369 63.1137C67.0369 63.1417 67.014 63.1646 66.986 63.1646L11.5002 63.1646C11.4718 63.1646 11.4494 63.1417 11.4494 63.1137L2.644 63.1137C1.1837 63.1137 0 61.6234 0 59.7848L0 22.7274C0 20.8366 1.21722 19.3042 2.71907 19.3042L9.06953 19.3042C10.5714 19.3042 11.7887 20.8366 11.7887 22.7274L11.7887 48.6654Z" />
+          <path fill="#E0992D" d="M17.5564 4.36597C17.5564 1.95607 19.5129 0 21.9227 0L56.8519 0C59.2618 0 61.2183 1.95607 61.2183 4.36597L61.2183 39.2955C61.2183 41.705 59.2618 43.6615 56.8519 43.6615L21.9227 43.6615C19.5129 43.6615 17.5564 41.705 17.5564 39.2955L17.5564 4.36597Z" />
+        </svg>
+        <span class="word">Kept</span>
+      </div>
+
+      <div class="head-links">
+        <span class="version" id="version">Latest release</span>
+        <a href="https://github.com/jamesbuckley-source/kept" data-external>GitHub</a>
+      </div>
+    </header>
+
+    <h2 class="title" id="heading">What's new</h2>
+    <p class="lede" id="lede">
+      Every change in this release, one card per feature. The full notes live with the release on GitHub.
+    </p>
+
+    <!-- The page ships with the newest features as examples, so it reads on its
+         own before the release notes arrive. -->
+    <ul class="features" id="features">
+      <li class="feature">
+        <span class="glyph">🎨</span>
+        <div>
+          <h3>A new mark</h3>
+          <p>The app icon, tray icon and settings header now carry the amber-and-ink Kept mark.</p>
+        </div>
+      </li>
+      <li class="feature">
+        <span class="glyph">💾</span>
+        <div>
+          <h3>Saving follows the clip</h3>
+          <p>Links save as shortcuts, colours as CSS, a GIF keeps its motion, and secrets ask before they leave the vault.</p>
+        </div>
+      </li>
+      <li class="feature">
+        <span class="glyph">☁️</span>
+        <div>
+          <h3>Cloud folder warning</h3>
+          <p>Choosing a data folder inside Drive or Dropbox now says what sync does to a live database.</p>
+        </div>
+      </li>
+      <li class="feature">
+        <span class="glyph">🗂️</span>
+        <div>
+          <h3>Sorted exports</h3>
+          <p>Save a mixed selection into <code>Images</code>, <code>Text</code> and <code>Files</code> folders, with a report of anything that had moved.</p>
+        </div>
+      </li>
+    </ul>
+
+    <footer class="page-foot">Kept · Advanced clipboard management, stored locally</footer>
+
+    <script src="/release-notes.js" defer></script>
+  </body>
+</html>

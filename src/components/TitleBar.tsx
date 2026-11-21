@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import type { CaptureMode } from "../lib/types";
 import { CaptureDelayDialog, CaptureDelayMenuItem } from "./CaptureDelayMenu";
+import { KeptMark } from "./KeptMark";
 import {
   IconCheck,
   IconChevronDown,
@@ -195,15 +196,9 @@ export function TitleBar({
       data-drag-window
       className="flex shrink-0 items-center gap-2.5 border-b border-edge bg-panel py-2 pl-3 pr-1.5"
     >
-      <div
-        data-drag-window
-        className="flex size-5 shrink-0 items-center justify-center rounded bg-accent/15 text-accent"
-      >
-        <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden="true">
-          <rect x="3" y="2.5" width="8.5" height="11" rx="1.6" fill="currentColor" opacity="0.5" />
-          <rect x="5" y="4.5" width="8.5" height="9.5" rx="1.6" fill="currentColor" />
-        </svg>
-      </div>
+      <span data-drag-window className="flex shrink-0 items-center">
+        <KeptMark className="h-[18px] w-auto text-ink" />
+      </span>
 
       <h1 data-drag-window className="text-[12px] font-semibold tracking-wide text-ink">
         Kept

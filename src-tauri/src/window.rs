@@ -22,6 +22,10 @@ pub const ADD_CLIP_LABEL: &str = "add-clip";
 /// Label of the setup wizard's own window; also listed in the capability file.
 pub const WIZARD_LABEL: &str = "wizard";
 
+/// Label of the update window that shows what a release contains; also listed in
+/// the capability file.
+pub const WHATS_NEW_LABEL: &str = "whats-new";
+
 /// Prefix shared by the independent window for each sticky clip.
 pub const STICKY_PREFIX: &str = "sticky-";
 
@@ -242,6 +246,58 @@ pub fn open_wizard<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     .maximizable(false)
     .background_color(theme_background(app))
     .always_on_top(always_on_top(app))
+    .center()
+    .build()?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// Opens (or focuses) the window that shows what a released version contains.
+///
+/// It has to be a window of its own rather than an overlay: the release notes are
+/// a page to read and act on, with the update buttons beside them.
+pub fn show_whats_new<R: Runtime>(app: &AppHandle<R>) {
+    if app.get_webview_window(WHATS_NEW_LABEL).is_some() {
+        if let Err(e) = open_whats_new(app) {
+            log::warn!("could not focus the update window: {e}");
+        }
+        return;
+    }
+    // Same constraint as the settings window: webviews have to be created from the
+    // event loop thread, so the call cannot run on the caller's thread.
+    let handle = app.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("whats-new-window".into())
+        .spawn(move || {
+            if let Err(e) = open_whats_new(&handle) {
+                log::warn!("could not open the update window: {e}");
+            }
+        })
+    {
+        log::warn!("could not spawn the update window thread: {e}");
+    }
+}
+
+/// Opens the update window: frameless, because its own header carries the drag
+/// handle and the close button.
+pub fn open_whats_new<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    const LABEL: &str = WHATS_NEW_LABEL;
+    if let Some(existing) = app.get_webview_window(LABEL) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        LABEL,
+        // Same reason as the settings window: say which window this is in the URL.
+        tauri::WebviewUrl::App("index.html?window=whats-new".into()),
+    )
+    .title("What's new in Kept")
+    .inner_size(660.0, 760.0)
+    .min_inner_size(520.0, 460.0)
+    .decorations(false)
+    .background_color(theme_background(app))
     .center()
     .build()?;
     let _ = window.set_focus();
@@ -1001,12 +1057,12 @@ mod tests {
                 secret_level: None,
                 face_count: 0,
                 url_cleaned: false,
+                has_rich: false,
             },
             text: None,
             file_paths: Vec::new(),
             ocr_text: None,
             note: None,
-            has_rich: false,
             uncleaned_url: None,
         }
     }

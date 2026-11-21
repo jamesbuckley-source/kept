@@ -494,6 +494,12 @@ pub struct Settings {
     pub gif_loop: bool,
     /// Folder one-click Markdown exports go to. Empty asks for one each time.
     pub markdown_export_dir: String,
+    /// Folder the last "Save as…" or export used, so the next one starts there.
+    /// Empty means the dialog opens wherever the system puts it.
+    pub last_save_dir: String,
+    /// A release the user chose to skip, so the update window stops offering it.
+    /// Empty means nothing is skipped; a newer version is offered again.
+    pub skipped_update_version: String,
     /// Precede each exported note with YAML front matter.
     pub markdown_front_matter: bool,
     /// Prefix note filenames with the capture date.
@@ -660,6 +666,8 @@ impl Default for Settings {
             gif_scale: 1.0,
             gif_loop: true,
             markdown_export_dir: String::new(),
+            last_save_dir: String::new(),
+            skipped_update_version: String::new(),
             markdown_front_matter: true,
             markdown_date_prefix: true,
             sidebar_list_limit: 6,
@@ -859,6 +867,13 @@ impl Settings {
             .trim()
             .chars()
             .take(1_000)
+            .collect();
+        self.last_save_dir = self.last_save_dir.trim().chars().take(1_000).collect();
+        self.skipped_update_version = self
+            .skipped_update_version
+            .trim()
+            .chars()
+            .take(40)
             .collect();
         // Same for the editor: empty means "no editor", so it has to survive.
         self.image_editor = self.image_editor.trim().chars().take(1_000).collect();

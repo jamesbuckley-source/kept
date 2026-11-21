@@ -24,7 +24,8 @@ export type UpdateState =
 
 export interface UpdaterControls {
   state: UpdateState;
-  checkNow: () => Promise<void>;
+  /** `background` runs the launch check, whose offer is the update window. */
+  checkNow: (background?: boolean) => Promise<void>;
   install: () => Promise<void>;
   dismiss: () => void;
 }
@@ -32,46 +33,63 @@ export interface UpdaterControls {
 export function useUpdater(options: {
   enabled: boolean;
   lastCheck: number;
+  /** A version the user skipped; the launch check stays quiet about it. */
+  skippedVersion: string;
   /** Records that a check happened, so the daily schedule survives restarts. */
   onChecked: () => void;
   onNotice: (message: string) => void;
+  /** The launch check found a release worth offering in the update window. */
+  onAutoUpdate: (version: string) => void;
 }): UpdaterControls {
-  const { enabled, lastCheck, onChecked, onNotice } = options;
+  const { enabled, lastCheck, skippedVersion, onChecked, onNotice, onAutoUpdate } = options;
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
   const pending = useRef<Update | null>(null);
   const busy = useRef(false);
 
-  const checkNow = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    setState({ kind: "checking" });
-    try {
-      const found = await check();
-      onChecked();
-      if (found) {
-        pending.current = found;
-        setState({ kind: "available", version: found.version, notes: found.body ?? null });
-      } else {
-        pending.current = null;
+  const checkNow = useCallback(
+    async (background = false) => {
+      if (busy.current) return;
+      busy.current = true;
+      setState({ kind: "checking" });
+      try {
+        const found = await check();
+        onChecked();
+        if (found) {
+          pending.current = found;
+          if (background) {
+            // The launch check offers the release in its own window; a banner as
+            // well would be a second, smaller copy of the same news. A skipped
+            // version is left alone until a newer one is released.
+            setState({ kind: "idle" });
+            if (found.version !== skippedVersion) onAutoUpdate(found.version);
+          } else {
+            setState({ kind: "available", version: found.version, notes: found.body ?? null });
+          }
+        } else {
+          pending.current = null;
+          setState({ kind: "idle" });
+          if (!background) onNotice("Kept is up to date.");
+        }
+      } catch (e) {
+        // Being offline is the normal case, so a scheduled check stays quiet.
         setState({ kind: "idle" });
-        onNotice("Kept is up to date.");
+        if (!background) {
+          onNotice(`Could not check for updates: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } finally {
+        busy.current = false;
       }
-    } catch (e) {
-      // Being offline is the normal case, so a scheduled check stays quiet.
-      setState({ kind: "idle" });
-      onNotice(`Could not check for updates: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      busy.current = false;
-    }
-  }, [onChecked, onNotice]);
+    },
+    [onAutoUpdate, onChecked, onNotice, skippedVersion],
+  );
 
   useEffect(() => {
     if (!enabled) return;
     if (Date.now() - lastCheck > DAY_MS) {
-      void checkNow();
+      void checkNow(true);
     }
     const timer = window.setInterval(() => {
-      if (Date.now() - lastCheck > DAY_MS) void checkNow();
+      if (Date.now() - lastCheck > DAY_MS) void checkNow(true);
     }, HOUR_MS);
     return () => window.clearInterval(timer);
   }, [enabled, lastCheck, checkNow]);

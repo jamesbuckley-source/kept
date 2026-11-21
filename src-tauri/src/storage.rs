@@ -45,6 +45,9 @@ pub struct StorageInfo {
     pub data_dir: String,
     pub default_dir: String,
     pub custom: bool,
+    /// The sync service that owns this folder, when one does. A live SQLite
+    /// database inside Dropbox or Google Drive is asking for trouble.
+    pub cloud: Option<String>,
 }
 
 fn pointer_path(default_dir: &Path) -> PathBuf {
@@ -94,7 +97,72 @@ pub fn info(default_dir: &Path, active: &Path) -> StorageInfo {
         data_dir: active.to_string_lossy().to_string(),
         default_dir: default_dir.to_string_lossy().to_string(),
         custom: active != default_dir,
+        cloud: cloud_service(active).map(str::to_string),
     }
+}
+
+/// The sync service a folder belongs to, when one of them owns it.
+///
+/// Kept keeps a live SQLite database plus its media files in the data folder.
+/// Sync clients copy and rewrite files behind the app's back — mid-transaction,
+/// which is exactly when a database must not be touched — so a folder inside one
+/// of these trees is worth a warning before anything is moved into it.
+///
+/// Detection is by the locations the clients actually use: Dropbox writes its
+/// sync roots into `info.json`, and Google Drive appears either as a folder named
+/// `Google Drive` or as the mounted `My Drive` of Drive for desktop.
+pub fn cloud_service(path: &Path) -> Option<&'static str> {
+    service_for(path, &dropbox_roots())
+}
+
+fn service_for(path: &Path, dropbox_roots: &[PathBuf]) -> Option<&'static str> {
+    if dropbox_roots.iter().any(|root| path.starts_with(root)) {
+        return Some("Dropbox");
+    }
+    // A `My Drive` mount belongs to Drive for desktop; the older client synced a
+    // folder literally called `Google Drive`.
+    let named = path.components().any(|component| {
+        let name = component.as_os_str().to_string_lossy();
+        name.eq_ignore_ascii_case("Google Drive") || name.eq_ignore_ascii_case("My Drive")
+    });
+    if named {
+        return Some("Google Drive");
+    }
+    None
+}
+
+/// Every folder Dropbox syncs, from the per-user `info.json` both clients write.
+///
+/// A missing or unreadable file is normal: it only exists on machines that run
+/// Dropbox.
+fn dropbox_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for base in [std::env::var_os("LOCALAPPDATA"), std::env::var_os("APPDATA")] {
+        let Some(base) = base else { continue };
+        let info = PathBuf::from(base).join("Dropbox").join("info.json");
+        let Ok(raw) = std::fs::read_to_string(&info) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        for key in ["personal", "business"] {
+            if let Some(root) = json.get(key).and_then(|entry| entry.get("path"))
+                && let Some(root) = root.as_str()
+                && !root.trim().is_empty()
+            {
+                roots.push(PathBuf::from(root));
+            }
+        }
+    }
+    // The client's default folder, for a machine whose info.json has gone.
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let fallback = PathBuf::from(home).join("Dropbox");
+        if fallback.is_dir() && !roots.iter().any(|root| *root == fallback) {
+            roots.push(fallback);
+        }
+    }
+    roots
 }
 
 /// Removes the files left behind by a completed move. Runs at startup, after the
@@ -274,6 +342,42 @@ mod tests {
             html: None,
             rtf: None,
         }
+    }
+
+    #[test]
+    fn a_sync_folder_is_named_and_a_plain_one_is_not() {
+        let roots = [PathBuf::from(r"C:\Users\me\Dropbox")];
+        assert_eq!(
+            service_for(Path::new(r"C:\Users\me\Dropbox\Kept"), &roots),
+            Some("Dropbox")
+        );
+        assert_eq!(
+            service_for(Path::new(r"G:\My Drive\Kept"), &roots),
+            Some("Google Drive")
+        );
+        assert_eq!(
+            service_for(Path::new(r"C:\Users\me\Google Drive\Kept"), &roots),
+            Some("Google Drive")
+        );
+        assert_eq!(
+            service_for(Path::new(r"C:\Users\me\AppData\Local\Kept"), &roots),
+            None,
+            "an ordinary folder is not a sync folder"
+        );
+    }
+
+    #[test]
+    fn a_folder_that_merely_mentions_a_service_is_left_alone() {
+        let roots = [PathBuf::from(r"C:\Users\me\Dropbox")];
+        assert_eq!(
+            service_for(Path::new(r"C:\Users\me\Dropbox-notes\Kept"), &roots),
+            None,
+            "a sibling with a similar name is not inside Dropbox"
+        );
+        assert_eq!(
+            service_for(Path::new(r"C:\My Drive notes"), &roots),
+            None
+        );
     }
 
     #[test]
