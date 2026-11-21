@@ -1,0 +1,4 @@
+# Shell scripts are executed inside the Linux container, where a CRLF shebang
+# makes the kernel look for an interpreter called "/bin/sh\r".
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
