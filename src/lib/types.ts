@@ -54,6 +54,8 @@ export interface ClipSummary {
   secretLevel: string | null;
   /** Faces the local detector found in an image clip; 0 otherwise. */
   faceCount: number;
+  /** True when this link was stored after tracking parameters were stripped. */
+  urlCleaned: boolean;
 }
 
 export interface ClipDetail extends ClipSummary {
@@ -67,6 +69,8 @@ export interface ClipDetail extends ClipSummary {
   note: string | null;
   /** True when HTML/RTF were captured next to the plain text. */
   hasRich: boolean;
+  /** The link as copied, when its tracking parameters were stripped. */
+  uncleanedUrl: string | null;
 }
 
 export interface RichText {
@@ -346,6 +350,8 @@ export interface Settings {
   printScreenCapture: boolean;
   /** Fetch a preview picture for every copied link. Off by default. */
   linkPreviewsAuto: boolean;
+  /** Strip tracking parameters from a copied link before the clip is stored. */
+  stripUrlTrackers: boolean;
   /** What Windows' Print Screen setting was before the app changed it; bookkeeping only. */
   printScreenPrevious?: number | null;
   /** Keep HTML/RTF alongside the plain body and paste it back. */

@@ -45,6 +45,7 @@ mod store;
 mod tray;
 #[cfg(windows)]
 mod uia;
+mod url_clean;
 mod vault;
 mod window;
 
@@ -209,6 +210,8 @@ pub fn run() {
     commands::cancel_gif_export,
             commands::export_markdown,
             commands::copy_text,
+            commands::copy_clean_url,
+            commands::copy_uncleaned_url,
             commands::copy_color,
             commands::save_color_palette,
             commands::open_url,

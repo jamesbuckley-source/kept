@@ -263,6 +263,27 @@ export function copyClip(id: number, autoPaste?: boolean, hideWindow = true): Pr
   return invoke("copy_clip", { id, autoPaste, hideWindow });
 }
 
+/**
+ * Copies a link with its tracking parameters removed. Answers the names it
+ * dropped, which is empty when the stored link was already clean.
+ */
+export function copyCleanUrl(
+  id: number,
+  autoPaste?: boolean,
+  hideWindow = false,
+): Promise<string[]> {
+  return invoke<string[]>("copy_clean_url", { id, autoPaste, hideWindow });
+}
+
+/** Copies a link back exactly as it was copied, before its trackers were stripped. */
+export function copyUncleanedUrl(
+  id: number,
+  autoPaste?: boolean,
+  hideWindow = false,
+): Promise<void> {
+  return invoke("copy_uncleaned_url", { id, autoPaste, hideWindow });
+}
+
 export function setPinned(id: number, pinned: boolean): Promise<void> {
   return invoke("set_pinned", { id, pinned });
 }

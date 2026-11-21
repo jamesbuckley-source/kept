@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-15T21:26:31.056Z",
+  "updatedAt": "2026-11-21T02:47:32.859Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3759,6 +3759,30 @@
         "src/lib/ipc.ts"
       ],
       "updatedAt": "2026-11-15T21:26:31.055Z"
+    },
+    {
+      "id": "strip-trackers-from-youtube-and-other-urls",
+      "title": "Strip Trackers from Youtube and other URLs",
+      "area": "General",
+      "status": "shipped",
+      "summary": "Copied links are cleaned before they are stored. url_clean.rs matches exact parameter names plus the utm_/mtm_/hsa_ prefixes, scoped per host (YouTube, youtube-nocookie, youtu.be, X, Facebook, Instagram, Threads, Reddit, LinkedIn, TikTok, Spotify, Amazon's listed storefronts and shorteners, eBay, AliExpress, Google, Bing, MSN, Microsoft, Substack, Medium, Twitch, Steam, Etsy, Walmart, Indeed), with an absolute keep list (v, id, q, url, token, signature, code, state, hash, redirect targets...) that beats every rule and a bail-out for accounts./login./checkout./sso. hosts and login, oauth, reset, unsubscribe, cart paths. Rewriting drops pairs from the raw query without re-encoding anything else, keeps the fragment and the order, drops every duplicate and a left-empty ?, and is idempotent. Review corrections are in: sig, Spotify's context, Amazon's psc and eBay's hash/campid are no longer dropped, the itm_/pk_ prefixes are out, and affiliate tags (Amazon tag, Etsy click_key, eBay mkcid, AliExpress aff_*, Steam snr) are excluded by design and tracked as their own card. Cleaning lives in Store::insert_clip, so watcher captures, dropped files, manual adds and in-app copies follow one rule; body, content hash, preview and search text all describe the clean link, while the address exactly as copied is kept in a new plaintext clips.original_url column (COALESCEd on dedupe, cleared when a clip is edited or sealed). ClipSummary.url_cleaned marks rows that were cleaned, and the context menu offers Copy uncleaned URL for them; any other url clip gets Copy clean link. copy_clean_url and copy_uncleaned_url publish either form against the same row without appending a second history entry, and clean publishes drop HTML/RTF so a pasted link cannot carry the dirty href. The stripUrlTrackers setting (on by default) turns it off; existing history is left alone. 13 cleaner tests and 4 store tests cover the rules, the dedupe, the setting switched off, editing and sealing.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/url_clean.rs",
+        "src-tauri/src/store.rs",
+        "src-tauri/src/commands.rs",
+        "src-tauri/src/models.rs",
+        "src-tauri/src/settings.rs",
+        "src-tauri/src/color.rs",
+        "src/App.tsx",
+        "src/lib/ipc.ts",
+        "src/lib/types.ts",
+        "src/components/SettingsPanel.tsx",
+        "https://github.com/AdguardTeam/FiltersRegistry/blob/master/filters/filter_17_TrackParam/filter.txt",
+        "https://github.com/ClearURLs/Rules/blob/master/data.min.json",
+        "https://firefox-source-docs.mozilla.org/toolkit/components/antitracking/anti-tracking/query-stripping/index.html"
+      ],
+      "updatedAt": "2026-11-17T21:05:29.473Z"
     }
   ]
 }

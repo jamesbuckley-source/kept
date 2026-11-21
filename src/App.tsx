@@ -56,9 +56,11 @@ import {
   cancelGifExport,
   clearHistory,
   copyClip,
+  copyCleanUrl,
   copyColor,
   copyOcrText,
   copyText,
+  copyUncleanedUrl,
   copyVideoFile,
   copyVideoUrl,
   copyVideoPath,
@@ -770,6 +772,35 @@ function MainApp() {
     try {
       await copyOcrText(clip.id, false);
       setNotice("Copied the text recognised in the image.");
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, []);
+
+  /**
+   * Copies a link with its trackers removed and says what went, so a silent
+   * rewrite never looks like the app mangled the address.
+   */
+  const copyCleanLink = useCallback(async (clip: ClipSummary) => {
+    try {
+      const removed = await copyCleanUrl(clip.id, false, false);
+      setNotice(
+        removed.length === 0
+          ? "Copied the link; it had no tracking parameters."
+          : `Copied a clean link · removed ${removed.length} ${
+              removed.length === 1 ? "parameter" : "parameters"
+            } (${removed.join(", ")}).`,
+      );
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, []);
+
+  /** Copies a cleaned link back exactly as it was originally copied. */
+  const copyUncleanedLink = useCallback(async (clip: ClipSummary) => {
+    try {
+      await copyUncleanedUrl(clip.id, false, false);
+      setNotice("Copied the link as it was originally copied.");
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -2423,6 +2454,22 @@ function MainApp() {
             onSelect: () => openLink(url),
           }),
         );
+        // A cleaned link stores the clean address, so plain Copy already gives
+        // that; what is worth offering is the address as it was copied. Any other
+        // link is the other way round.
+        items.push(
+          clip.urlCleaned
+            ? {
+                label: "Copy uncleaned URL",
+                icon: <IconCopy className="size-3" />,
+                onSelect: () => void copyUncleanedLink(clip),
+              }
+            : {
+                label: "Copy clean link",
+                icon: <IconCopy className="size-3" />,
+                onSelect: () => void copyCleanLink(clip),
+              },
+        );
       }
       if (clip.contentKind === "email") {
         const email = clip.preview.trim();
@@ -2566,6 +2613,8 @@ function MainApp() {
       bulkPin,
       collections,
       copySilently,
+      copyCleanLink,
+      copyUncleanedLink,
       copyTextFromImage,
       copyVideoFileSilently,
       copyVideoUrlSilently,

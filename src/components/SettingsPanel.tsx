@@ -2059,6 +2059,17 @@ export function SettingsPanel({
               }
             />
             <Row
+              label="Clean links"
+              hint="Strips tracking parameters from a copied link before it is stored — YouTube's si, Amazon's ref_, utm_*. Sign-in, checkout, reset and unsubscribe addresses are never touched. The address exactly as you copied it is kept beside the clean one, so the right-click menu can copy it back."
+              control={
+                <Toggle
+                  label="Strip tracking parameters from copied links"
+                  checked={settings.stripUrlTrackers}
+                  onChange={(next) => void onPatch({ stripUrlTrackers: next })}
+                />
+              }
+            />
+            <Row
               label="Capture images"
               control={
                 <Toggle

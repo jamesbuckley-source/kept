@@ -670,9 +670,23 @@ fn copy_clip_inner(
     auto_paste: Option<bool>,
     hide_window: Option<bool>,
 ) -> Result<()> {
-    let settings = state.store.settings();
     let sequence = publish_clip(app, state, id)?;
+    finish_copy(app, state, sequence, auto_paste, hide_window);
+    Ok(())
+}
 
+/// Hides the window, arms the auto-clear timer and optionally pastes.
+///
+/// This is the tail every copy shares, whatever the address came from: the clip
+/// itself, one of its links, or a link with its tracking parameters removed.
+fn finish_copy(
+    app: &AppHandle,
+    state: &AppState,
+    sequence: u32,
+    auto_paste: Option<bool>,
+    hide_window: Option<bool>,
+) {
+    let settings = state.store.settings();
     // Copying from a hover button leaves the window up so the user can keep
     // browsing; only an activation (Enter, double click) dismisses it.
     let should_hide = hide_window.unwrap_or(true);
@@ -700,7 +714,79 @@ fn copy_clip_inner(
             None => log::debug!("no paste target recorded; leaving the clip on the clipboard"),
         }
     }
+}
+
+/// Copies one clip's text and records the reuse against that same row.
+///
+/// Deliberately not routed through `copy_text`: a derived form of an existing clip
+/// is still that clip being used, so publishing it must not append a second entry
+/// to the history.
+fn publish_text_of_clip(
+    app: &AppHandle,
+    state: &AppState,
+    id: i64,
+    text: String,
+    auto_paste: Option<bool>,
+    hide_window: Option<bool>,
+) -> Result<()> {
+    let hash = clipboard::write(&ClipContent::Text(text))?;
+    // The watcher polls on a timer; latch the write before the row is touched so
+    // it cannot be captured as a fresh clip.
+    state.watcher.suppress_hash(hash);
+    let sequence = clipboard::sequence_number();
+    state.store.record_copy(id)?;
+    let _ = app.emit(EVENT_HISTORY_CHANGED, ());
+    finish_copy(app, state, sequence, auto_paste, hide_window);
     Ok(())
+}
+
+/// Puts a clip's link on the clipboard with its tracking parameters removed.
+///
+/// Answers the names it dropped so the interface can say what happened; an empty
+/// list means the link was already clean.
+#[tauri::command]
+pub fn copy_clean_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    auto_paste: Option<bool>,
+    hide_window: Option<bool>,
+) -> Result<Vec<String>> {
+    let result = (|| {
+        let text = state
+            .store
+            .text_content(id)?
+            .ok_or_else(|| AppError::msg("that clip is not text"))?;
+        let (value, removed) = match crate::url_clean::clean(&text) {
+            Some(cleaned) => (cleaned.url, cleaned.removed),
+            None => (text, Vec::new()),
+        };
+        publish_text_of_clip(&app, &state, id, value, auto_paste, hide_window)?;
+        Ok(removed)
+    })();
+    copy_outcome(&state, &result);
+    result
+}
+
+/// Puts the link back on the clipboard exactly as it was copied, before its
+/// tracking parameters were stripped.
+#[tauri::command]
+pub fn copy_uncleaned_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    auto_paste: Option<bool>,
+    hide_window: Option<bool>,
+) -> Result<()> {
+    let result = (|| {
+        let original = state
+            .store
+            .original_url(id)?
+            .ok_or_else(|| AppError::msg("this link was not cleaned, so it has no original"))?;
+        publish_text_of_clip(&app, &state, id, original, auto_paste, hide_window)
+    })();
+    copy_outcome(&state, &result);
+    result
 }
 
 /// Writes a stored clip to the clipboard and records the reuse.

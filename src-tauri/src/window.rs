@@ -1000,12 +1000,14 @@ mod tests {
                 tags: Vec::new(),
                 secret_level: None,
                 face_count: 0,
+                url_cleaned: false,
             },
             text: None,
             file_paths: Vec::new(),
             ocr_text: None,
             note: None,
             has_rich: false,
+            uncleaned_url: None,
         }
     }
 

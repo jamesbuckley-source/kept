@@ -93,7 +93,10 @@ CREATE TABLE IF NOT EXISTS clips (
   face_count     INTEGER NOT NULL DEFAULT 0,
   face_state     INTEGER NOT NULL DEFAULT 0,
   motion_url     TEXT,
-  duration_ms    INTEGER
+  duration_ms    INTEGER,
+  -- The address a link was copied from, when its tracking parameters were
+  -- stripped before the row was written. NULL for everything else.
+  original_url   TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clips_hash  ON clips(content_hash);
@@ -170,7 +173,7 @@ const CLIP_COLUMNS: &str = "id, kind, byte_size, char_count, file_count, \
      preview, preview_nonce, body, body_nonce, files, files_nonce, \
      image_path, thumb_path, width, height, source_app, pinned, created_at, updated_at, copy_count, \
      ocr_text, ocr_nonce, html, html_nonce, rtf, rtf_nonce, note, note_nonce, secret_level, \
-     face_count, face_state, media_sealed, motion_url";
+     face_count, face_state, media_sealed, motion_url, original_url";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InsertOutcome {
@@ -720,6 +723,7 @@ impl Store {
             tags,
             secret_level: row.secret_level.clone(),
             face_count: row.face_count,
+            url_cleaned: row.original_url.is_some(),
         };
 
         Ok(IndexedClip {
@@ -901,7 +905,18 @@ impl Store {
             ocr_text,
             note,
             has_rich: row.html.is_some() || row.rtf.is_some(),
+            uncleaned_url: row.original_url,
         })
+    }
+
+    /// The link exactly as it was copied, when tracking parameters were stripped.
+    pub fn original_url(&self, id: i64) -> Result<Option<String>> {
+        let row = {
+            let conn = self.conn.lock();
+            load_clip_row(&conn, id)?
+        }
+        .ok_or_else(|| AppError::NotFound(format!("clip {id}")))?;
+        Ok(row.original_url)
     }
 
     /// Full plaintext of a text clip, used when writing it back to the clipboard.
@@ -982,7 +997,19 @@ impl Store {
     // Writes
     // -----------------------------------------------------------------------
 
-    pub fn insert_clip(&self, new: NewClip) -> Result<InsertOutcome> {
+    pub fn insert_clip(&self, mut new: NewClip) -> Result<InsertOutcome> {
+        let settings = self.settings();
+        // A copied link usually arrives decorated with parameters that identify
+        // whoever shared it. Cleaned here rather than in capture, so every way a
+        // clip can be created — watcher, dropped file, manual add, in-app copy —
+        // follows one rule, and so the hash, preview and search text all describe
+        // the body that is actually stored.
+        let original_url = if settings.strip_url_trackers {
+            crate::url_clean::clean_clip(&mut new)
+        } else {
+            None
+        };
+
         // Duplicate content is promoted rather than stored twice. Checked before
         // any media is materialised so a repeat screenshot costs nothing on disk.
         let existing = {
@@ -997,9 +1024,14 @@ impl Store {
                     "UPDATE clips
                         SET updated_at = ?2,
                             copy_count = copy_count + 1,
-                            source_app = COALESCE(?3, source_app)
+                            source_app = COALESCE(?3, source_app),
+                            -- The same video shared twice carries a different share
+                            -- id, so re-copying it lands on this row: keep the
+                            -- address the first copy had, but fill it in if the row
+                            -- predates this feature.
+                            original_url = COALESCE(original_url, ?4)
                       WHERE id = ?1",
-                    params![id, now, new.source_app.as_deref()],
+                    params![id, now, new.source_app.as_deref(), original_url],
                 )?;
             }
             self.refresh_entry(id)?;
@@ -1012,7 +1044,7 @@ impl Store {
                 height,
                 rgba,
             } => {
-                let max_bytes = self.settings().max_image_bytes;
+                let max_bytes = settings.max_image_bytes;
                 let files =
                     media::write_image_files(&self.media_dir, *width, *height, rgba, max_bytes)?;
                 Some(files)
@@ -1038,7 +1070,6 @@ impl Store {
 
         let secret_level = match &new.content {
             ClipContent::Text(text) => {
-                let settings = self.settings();
                 if settings.flag_secrets {
                     crate::secrets::detect(text, settings.secret_heuristics)
                         .map(|level| level.as_str().to_string())
@@ -1059,6 +1090,7 @@ impl Store {
                 media.as_ref(),
                 files_thumb.as_deref(),
                 secret_level.as_deref(),
+                original_url.as_deref(),
             )
         };
 
@@ -1361,6 +1393,9 @@ impl Store {
                         html_nonce = NULL,
                         rtf = NULL,
                         rtf_nonce = NULL,
+                        -- The edit replaced whatever link was cleaned, so the
+                        -- remembered original no longer describes this row.
+                        original_url = NULL,
                         updated_at = ?7
                   WHERE id = ?1",
                 params![
@@ -3506,6 +3541,11 @@ fn migrate(conn: &Connection) -> Result<()> {
             "duration_ms",
             "ALTER TABLE clips ADD COLUMN duration_ms INTEGER",
         ),
+        // The address a cleaned link was copied from, for "Copy uncleaned URL".
+        (
+            "original_url",
+            "ALTER TABLE clips ADD COLUMN original_url TEXT",
+        ),
     ] {
         if !clip_columns.iter().any(|name| name == column) {
             conn.execute(ddl, [])?;
@@ -3823,7 +3863,10 @@ fn seal_row(conn: &rusqlite::Connection, key: &crate::vault::VaultKey, row: &Cli
                 ocr_text = ?8, ocr_nonce = ?9,
                 html = ?10, html_nonce = ?11,
                 rtf = ?12, rtf_nonce = ?13,
-                note = ?14, note_nonce = ?15
+                note = ?14, note_nonce = ?15,
+                -- A sealed clip's payload is all ciphertext, so the plaintext copy
+                -- of the original link cannot stay readable beside it.
+                original_url = NULL
           WHERE id = ?1",
         params![
             row.id, preview.0, preview.1, body.0, body.1, files.0, files.1, ocr.0, ocr.1, html.0,
@@ -3914,6 +3957,7 @@ fn row_to_clip(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipRow> {
         face_state: row.get(30)?,
         media_sealed: row.get::<_, i64>(31)? != 0,
         motion_url: row.get(32)?,
+        original_url: row.get(33)?,
     })
 }
 
@@ -3955,6 +3999,7 @@ fn insert_row(
     media: Option<&ImageFiles>,
     files_thumb: Option<&str>,
     secret_level: Option<&str>,
+    original_url: Option<&str>,
 ) -> Result<i64> {
     let preview = new.preview.as_bytes().to_vec();
 
@@ -4002,10 +4047,10 @@ fn insert_row(
             preview, preview_nonce, body, body_nonce, files, files_nonce,
             image_path, thumb_path, width, height, source_app,
             html, html_nonce, rtf, rtf_nonce,
-            pinned, created_at, updated_at, copy_count, secret_level
+            pinned, created_at, updated_at, copy_count, secret_level, original_url
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, ?8, NULL,
-            ?9, ?10, ?11, ?12, ?13, ?14, NULL, ?15, NULL, 0, ?16, ?16, 1, ?17
+            ?9, ?10, ?11, ?12, ?13, ?14, NULL, ?15, NULL, 0, ?16, ?16, 1, ?17, ?18
          )",
         params![
             new.content.kind().as_str(),
@@ -4025,6 +4070,7 @@ fn insert_row(
             rtf,
             now,
             secret_level,
+            original_url,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -4363,6 +4409,113 @@ mod tests {
         assert_eq!(page.items[0].kind, ClipKind::Text);
         assert_eq!(page.items[0].char_count, 15);
         assert_eq!(page.items[0].copy_count, 1);
+    }
+
+    #[test]
+    fn a_copied_link_is_stored_clean_and_keeps_the_address_it_came_from() {
+        let (store, _dir) = test_store();
+        let id = match store
+            .insert_clip(unique_text_clip("https://youtu.be/dQw4w9WgXcQ?si=abc"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            InsertOutcome::Duplicate(_) => panic!("the first capture is new"),
+        };
+
+        // The stored body is the clean link, so pasting, the search index and the
+        // link preview all agree, while the address as copied stays available.
+        assert_eq!(
+            store.text_content(id).unwrap().as_deref(),
+            Some("https://youtu.be/dQw4w9WgXcQ")
+        );
+        assert_eq!(
+            store.original_url(id).unwrap().as_deref(),
+            Some("https://youtu.be/dQw4w9WgXcQ?si=abc")
+        );
+        let summary = store.detail(id).unwrap().summary;
+        assert!(summary.url_cleaned);
+        assert_eq!(summary.content_kind.as_deref(), Some("url"));
+
+        // The same video shared again carries a different share id, so it has to
+        // land on this row instead of becoming a second clip.
+        let again = store
+            .insert_clip(unique_text_clip("https://youtu.be/dQw4w9WgXcQ?si=xyz"))
+            .unwrap();
+        assert!(matches!(again, InsertOutcome::Duplicate(existing) if existing == id));
+        assert_eq!(store.total(), 1);
+        assert_eq!(
+            store.original_url(id).unwrap().as_deref(),
+            Some("https://youtu.be/dQw4w9WgXcQ?si=abc"),
+            "the address the user actually copied is the one remembered"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_text_clip_is_left_exactly_as_it_was() {
+        let (store, _dir) = test_store();
+        let body = "see https://youtu.be/x?si=abc for the talk";
+        let id = match store.insert_clip(unique_text_clip(body)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            InsertOutcome::Duplicate(_) => panic!("the first capture is new"),
+        };
+        assert_eq!(store.text_content(id).unwrap().as_deref(), Some(body));
+        assert!(store.original_url(id).unwrap().is_none());
+        assert!(!store.detail(id).unwrap().summary.url_cleaned);
+    }
+
+    #[test]
+    fn turning_the_setting_off_keeps_the_address_as_copied() {
+        let (store, _dir) = test_store();
+        store
+            .update_settings(&serde_json::json!({ "stripUrlTrackers": false }))
+            .unwrap();
+        let copy = "https://youtu.be/dQw4w9WgXcQ?si=abc";
+        let id = match store.insert_clip(unique_text_clip(copy)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            InsertOutcome::Duplicate(_) => panic!("the first capture is new"),
+        };
+        assert_eq!(store.text_content(id).unwrap().as_deref(), Some(copy));
+        assert!(store.original_url(id).unwrap().is_none());
+        assert!(!store.detail(id).unwrap().summary.url_cleaned);
+    }
+
+    #[test]
+    fn editing_a_cleaned_link_forgets_the_original() {
+        let (store, _dir) = test_store();
+        let id = match store
+            .insert_clip(unique_text_clip("https://youtu.be/dQw4w9WgXcQ?si=abc"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            InsertOutcome::Duplicate(_) => panic!("the first capture is new"),
+        };
+        store.set_text(id, "https://example.com/edited").unwrap();
+        assert!(
+            store.original_url(id).unwrap().is_none(),
+            "the remembered original described the text that was replaced"
+        );
+        assert!(!store.detail(id).unwrap().summary.url_cleaned);
+    }
+
+    #[test]
+    fn sealing_a_cleaned_link_forgets_the_plaintext_original() {
+        let (store, _dir) = test_store();
+        store.create_vault("a good passphrase").unwrap();
+        let id = match store
+            .insert_clip(unique_text_clip("https://youtu.be/dQw4w9WgXcQ?si=abc"))
+            .unwrap()
+        {
+            InsertOutcome::Inserted(id) => id,
+            InsertOutcome::Duplicate(_) => panic!("the first capture is new"),
+        };
+        assert!(store.original_url(id).unwrap().is_some());
+
+        store.set_secret(id, true).unwrap();
+
+        // The body is ciphertext now, so a readable copy of the address beside it
+        // would give the secret away.
+        assert!(store.original_url(id).unwrap().is_none());
+        assert!(!store.detail(id).unwrap().summary.url_cleaned);
     }
 
     #[test]

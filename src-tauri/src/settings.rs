@@ -536,6 +536,12 @@ pub struct Settings {
     /// Off by default: a clipboard manager that quietly calls out for every address
     /// you copy is a different product from one that never leaves the machine.
     pub link_previews_auto: bool,
+    /// Strip tracking parameters from copied links before the clip is stored.
+    ///
+    /// On by default, because the address that was actually copied is kept beside
+    /// the clean one and can be copied back at any time. Cleaning happens locally
+    /// and only ever touches a link that is the whole payload.
+    pub strip_url_trackers: bool,
     /// Play the copy sound for every capture the watcher takes, not only for the
     /// copies made from inside the app. Off by default.
     pub sound_on_capture: bool,
@@ -678,6 +684,7 @@ impl Default for Settings {
             secret_heuristics: false,
             skip_secret_capture: false,
             link_previews_auto: false,
+            strip_url_trackers: true,
             sound_on_capture: false,
             theme: Theme::default(),
             capture_outline: DEFAULT_CAPTURE_OUTLINE.into(),

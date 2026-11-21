@@ -175,7 +175,12 @@ pub fn classify(text: &str) -> Option<ContentKind> {
     is_markdown(trimmed).then_some(ContentKind::Markdown)
 }
 
-fn is_url(text: &str) -> bool {
+/// True for a single-line http(s) address of sane length.
+///
+/// Shared with the link cleaner, which must agree with the classifier about what
+/// counts as a whole-payload URL: if the two ever disagreed, a clip would be
+/// labelled "url" in the list and yet never be cleaned.
+pub(crate) fn is_url(text: &str) -> bool {
     (text.starts_with("http://") || text.starts_with("https://"))
         && !text.chars().any(char::is_whitespace)
         && text.len() <= 2048

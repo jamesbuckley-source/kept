@@ -98,6 +98,10 @@ pub struct ClipRow {
     /// The address a recovered video was fetched from, when the page named one.
     /// Never written for a secret clip: this column is plaintext.
     pub motion_url: Option<String>,
+    /// The link exactly as it was copied, when tracking parameters were stripped
+    /// before the row was written. Plaintext like `motion_url`, and cleared when a
+    /// clip is sealed for the same reason.
+    pub original_url: Option<String>,
 }
 
 /// What the history list needs. Deliberately excludes the full body so that
@@ -160,6 +164,9 @@ pub struct ClipSummary {
     pub secret_level: Option<String>,
     /// Faces the detector found in an image clip; 0 for everything else.
     pub face_count: i64,
+    /// True when this link was stored after tracking parameters were stripped, so
+    /// the menu can offer "Copy uncleaned URL".
+    pub url_cleaned: bool,
 }
 
 /// A summary plus the payload needed to actually use the clip.
@@ -178,6 +185,9 @@ pub struct ClipDetail {
     pub note: Option<String>,
     /// True when the clip carries HTML/RTF captured next to its plain text.
     pub has_rich: bool,
+    /// The link exactly as it was copied, when tracking parameters were stripped
+    /// from it. This is what "Copy uncleaned URL" hands back.
+    pub uncleaned_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
