@@ -3,6 +3,11 @@ name: Release
 # Tag a commit (`git tag v0.3.1 && git push origin v0.3.1`) and this builds the
 # NSIS installer, signs it for the updater and publishes the release together with
 # `latest.json`, which is what installed copies poll.
+#
+# The release body comes from `docs/release-notes.md`, so rewrite that file before
+# tagging. tauri-action uses the same string for the GitHub release and for the
+# `notes` field of `latest.json`, which is what Kept's update window renders — a
+# release published without notes leaves that window showing its built-in examples.
 on:
   push:
     tags:
@@ -38,6 +43,21 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # Read the notes once and hand them to the build step. An empty or missing
+      # file publishes a release with no body, which is what happened before this
+      # step existed, so a mistake here cannot break the build.
+      - name: Read the release notes
+        id: notes
+        shell: bash
+        run: |
+          if [ -s docs/release-notes.md ]; then
+            {
+              echo 'body<<KEPT_RELEASE_NOTES_EOF'
+              cat docs/release-notes.md
+              echo 'KEPT_RELEASE_NOTES_EOF'
+            } >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -47,6 +67,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Kept ${{ github.ref_name }}
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: --bundles nsis

@@ -67,6 +67,9 @@ function cards(markdown) {
   for (const raw of markdown.replace(/\r\n/g, "\n").split("\n")) {
     const line = raw.trim();
     if (!line) continue;
+    // HTML comments are how a notes file is annotated for the people writing it;
+    // they are not something to show on the page.
+    if (line.startsWith("<!--")) continue;
     const headingMatch = /^#{1,4}\s+(.*)$/.exec(line);
     if (headingMatch) {
       start(headingMatch[1].replace(/^\[|\]$/g, "").trim());
