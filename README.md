@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="design/Full%20Logo%20Light.png">
+    <img src="design/Full%20Logo.png" alt="Kept" width="222">
+  </picture>
+</p>
+
 # Kept
 
 A clipboard history manager for Windows: Tauri 2 + React 19 + TypeScript + Tailwind CSS 4.
@@ -26,21 +33,28 @@ place.
 
 ## Screenshots
 
-![Kept main window](docs/screenshots/main-interface.png)
+![Kept in the light and dark themes](docs/screenshots/main-interface.png)
 
-*The history view: search and filters on the left, clips in the middle, and the preview pane with
-the colour scheme, notes, collections, archives and tags on the right. The **Add clip** button sits
-in the toolbar, and the version number at the bottom right is also the manual update-check button.*
+*The same history in both themes, light on the left and dark on the right: search and filters down
+the side, clips in the middle, and the preview pane with the colour scheme, notes, collections,
+archives and tags on the right.*
+
+| | |
+|---|---|
+| ![Screen recording bar](docs/screenshots/record-bar.png) | ![Quick paste](docs/screenshots/quick-paste.png) |
+| *The recording bar: the four recording modes, the size, and the sound and pointer switches.* | *`::` in another application opens the quick paste box without leaving the sentence.* |
+| ![Paste stack, docked and popped out](docs/screenshots/paste-stack.png) | ![Capture menu](docs/screenshots/capture-menu.png) |
+| *The paste stack in the app, and in its own always-on-top window.* | *The capture button repeats the last kind; the chevron opens all of them.* |
 
 ![Quick preview of an image clip](docs/screenshots/quick-preview.png)
 
 *`Space` opens the selected clip over a dimmed history. Images get zoom controls at the bottom; text
 clips open in a larger editor.*
 
-![First-run setup wizard](docs/screenshots/first-run-wizard.png)
+![Getting started](docs/screenshots/getting-started.png)
 
-*The first-run wizard covers the summon hotkey, paste and privacy choices, secret handling,
-retention, theme and sounds. It can be re-run from Settings at any time.*
+*The first-run wizard: the summon hotkey and capture choices, privacy and secrets, then retention,
+theme and the image editor. It can be re-run from Settings at any time.*
 
 ## What it does
 
@@ -180,43 +194,25 @@ old `%APPDATA%\com.copypaste.app` folder is left in place, so a rollback still w
 
 ## Tray and background behaviour
 
-Both, by design:
+Kept starts hidden and lives in the tray. Left-click the icon to toggle the window; right-click for
+the full menu — *New clip…*, *Color Picker*, *Onscreen ruler*, a **Capture** submenu, **Pause
+capture**, *Settings…*, *Data folder* and *Quit*. The menu follows the state: a pause reads *Resume
+capture (12 min left)*, and *Lock vault* appears only while the vault is open.
 
-- **Tray icon** for the lifetime of the process. Left click toggles the overlay; right click is a
-  full menu: *New clip…*; *Color Picker*; *Onscreen ruler*; a **Capture** submenu with *Region*,
-  *Window*, *Full screen*, *Scrolling* and *Previous area*; **Pause capture** with *15 minutes*,
-  *1 hour* and *Until restart*; *Settings…*;
-  *Data folder*; and *Quit*. The menu is rebuilt as things change, so *Pause capture* becomes
-  *Resume capture (12 min left)* while a pause runs and *Lock vault* appears only while the vault is
-  open. The tooltip carries the same pause state.
-- **Taskbar button** by default, so the window behaves like a normal app. Turn off
-  *Appearance → Show in the taskbar* to keep it tray-only. The frameless title bar carries its
-  own minimize / maximize / close buttons and can be dragged anywhere along its length.
-- **Closing does not quit.** The ✕ button *and* Alt+F4 hide the window, leaving the clipboard
-  watcher running so history keeps accumulating. Quitting is deliberately only available from
-  the tray menu.
-- **Losing focus keeps the window open.** It is an inspection surface, so it should not vanish
-  when you click away to look something up. *Settings → Window → Hide when focus is lost* opts
-  back into the overlay behaviour.
-- **Not pinned on top by default.** The overlay behaves like an ordinary window unless
-  *Settings → Window → Always on top* is enabled, which keeps it above whatever you are working in.
-  The preference belongs to the app rather than to one window: settings, the New clip form and
-  anything else it opens inherit it, windows already on screen follow a change to it, and **sticky
-  clips** are always on top regardless.
-- **One instance at a time.** Launching again from the Start Menu raises the running instance
-  rather than starting a second copy, which would otherwise add a duplicate tray icon and fail
-  to claim the global hotkey a second time.
-- **Launch at login** is a setting; when enabled the app registers itself with the Windows
-  startup list and returns after a reboot, still hidden.
+Closing the window hides it and the clipboard watcher keeps running; quitting is deliberate, from
+the tray menu only. The window is an ordinary window rather than an always-on-top overlay unless
+*Settings → Window → Always on top* says otherwise, losing focus does not dismiss it, and only one
+copy runs at a time — launching again raises the running instance. *Launch at login* and *Show in
+the taskbar* are settings.
 
 ## Keyboard
 
 | Key | Action |
 |---|---|
-| `Alt+V` | Show / hide the overlay (configurable) |
-| `Ctrl+Alt+P` | Toggle private mode, pausing capture (configurable) |
-| *your own* | Open the New clip window (*Settings → Activation → New clip shortcut*; empty by default) |
+| `Alt+V` | Show / hide the overlay (*Settings → Activation → Global hotkey*) |
+| `Ctrl+Alt+P` | Toggle private mode, pausing capture (*Settings → Activation → Private mode shortcut*) |
 | `Alt+Shift+V` | Paste the next paste-stack item and use it up (*Settings → Activation → Paste stack shortcut*) |
+| `Print Screen` | Capture the default kind, once *Settings → Capture → Print Screen* is switched on |
 | `::` | Open the quick paste box while typing in another application (*Settings → Quick paste*, off by default) |
 | `↑` `↓` | Move the selection |
 | `PgUp` `PgDn` `Home` `End` | Jump through the list |
@@ -233,11 +229,34 @@ Both, by design:
 | `Del` | Delete the selected clip, or the whole selection (only while the search box is empty) |
 | `Esc` | Clear the selection, the clip or settings search, close settings, or hide the window |
 
+The quick paste box has its own keys: `↓` reveals the recent list and walks down it, typing searches,
+`Enter` pastes the highlighted clip and `Esc` closes the box without pasting.
+
 The onscreen ruler has keys of its own. `Esc` closes it; while it is locked click-through, the first
 `Esc` unlocks it and the second closes it. Inside the overlay, `V`/`D`/`B`/`A` choose select,
 distance, box and angle, `G` toggles guides, `S` snapping, `C` copies, `L` locks, the arrow keys nudge
 the active measurement (`Shift` for 10 px), `Tab` cycles measurements, `Delete` removes the active
 one and `F5` refreshes the snapping snapshot.
+
+**No default, yours to assign.** These global actions start with no shortcut and are recorded by
+clicking the field and pressing the keys; an empty field means none:
+
+| Action | Where |
+|---|---|
+| New clip | *Settings → Activation → New clip shortcut* |
+| Region capture | *Settings → Capture → Capture shortcuts* |
+| Window capture | *Settings → Capture → Capture shortcuts* |
+| Full-screen capture | *Settings → Capture → Capture shortcuts* |
+| Scrolling capture | *Settings → Capture → Capture shortcuts* |
+| Capture the previous area | *Settings → Capture → Capture shortcuts* |
+| Colour picker | *Settings → Capture → Capture shortcuts* |
+| Onscreen ruler | *Settings → Capture → Capture shortcuts* |
+| Record the screen | *Settings → Screen Recording* |
+| Stop the recording | *Settings → Screen Recording* |
+| Pause or resume the recording | *Settings → Screen Recording* |
+
+A combination Windows refuses because another application owns it is reported and the previous one
+stays active.
 
 ## Searching
 
@@ -282,39 +301,16 @@ time — click it to resume.
 
 ## Secrets
 
-Kept flags text that looks like a credential — private-key blocks, `Authorization` headers,
-URLs with embedded passwords, JWTs and the usual token prefixes (`ghp_`, `sk_live_`, `xox*`, `AIza`,
-`AKIA`, …). The flag is decided at capture time on the plaintext and only the confidence is kept, so
-the history list can warn without decrypting anything. A flagged clip's preview is blurred until you
-press *Reveal*, and the preview pane says how sure the match is. In card view the reveal control is a
-shield icon in the top-left corner of the thumbnail instead of sitting at the end of the preview
-line, so it never lands under the hover actions. Flagged text clips carry a gold
-**Secret** pill instead of their usual Text/Link label, so they stand out in both layouts. A
-concealed secret keeps its first character and its last three readable so two credentials can be
-told apart; under eight characters only the last one is shown. Text clips no longer repeat their
-payload underneath the mask, and neither the card nor the row hands the value to a tooltip.
+Kept flags text that looks like a credential — private-key blocks, `Authorization` headers, URLs
+with embedded passwords, JWTs and the usual token prefixes (`ghp_`, `sk_live_`, `xox*`, `AIza`,
+`AKIA`, …). The guess is made locally on the plaintext at capture time and only the confidence is
+stored. A flagged clip stays blurred until **Reveal**, carries a gold **Secret** pill, and keeps its
+first character and last three readable so two credentials can be told apart.
 
-Detection is only a guess, so any text clip can be marked by hand: the shield button in the
-preview pane's action row turns the flag on, and pressing it again clears it and leaves an ordinary
-text clip. A manual mark is stored at the highest confidence, so it blurs and asks the same way a
-detected one does — including before a Markdown export writes it to disk.
-
-*Reveal* is a toggle: once a secret is showing, the same control reads *Hide* and puts the blur back,
-in the list, on a card and in the properties pane.
-
-*Settings → Capture* adds two options: *Guess from context* (keyword plus entropy matching, off by
-default because it is noisier) and *Leave secrets out of history*, which skips a flagged copy instead
-of storing it. Detection runs locally and match details are never logged.
-
-## Sounds
-
-*Settings → Sounds* plays a short tick when a copy succeeds and a lower tone when one fails. Both
-ship with the app; each can be switched off, and either can be replaced with your own `.wav`. Saving
-a color palette counts as a success, so it plays the copy tick — the same toggle and the same file.
-
-**Sound on every capture** is a separate switch, off by default: on, the copy tick plays whenever
-Kept stores a new clip from any program, not only for the copies made inside it. A clip already
-in the history is promoted rather than added, so re-copying something makes no noise.
+Detection is only a guess, so any text clip can be marked by hand with the shield in the preview
+pane; pressing it again clears the flag. *Settings → Capture* adds **Guess from context** (noisier,
+off by default) and **Leave secrets out of history**. Marking a clip secret in the vault encrypts
+the text and its media — see [the vault](#the-vault).
 
 ## Paste stack
 
@@ -389,214 +385,44 @@ setting goes off. There are three consequences worth knowing:
 
 ## Bulk actions
 
-`Ctrl+Click` extends the selection — the clip that was already highlighted joins the group on the
-first such click — `Shift+Click` selects a range and `Ctrl+A` takes everything visible. A bar above
-the list then offers **Pin**, **Unpin**, **Tag…**, **Collect…**, **Save to…** and **Delete**;
-`Del` deletes the whole selection, and `Esc` clears it. The right-click menu gains *Export N as
-Markdown* for the same selection, which writes one note per text clip and counts the ones it had to
-skip, and *Add N clips to Stack* to queue the lot.
-
-*Collect…* accepts an existing collection name or a new one — typing a name that does not exist
-creates the collection and files the selection into it. *Save to…* exports every picked clip into
-one folder, the same way *Save as…* handles a single clip. The bar wraps rather than squeezing its
-buttons, so every action keeps its full label in a narrow window.
-
-Right-clicking one of the selected clips opens the same actions for the whole selection — *Pin 3
-clips*, *Tag 3 clips…*, *Delete 3 clips* — above the usual single-clip entries, and right-clicking
-never disturbs what is selected. Right-clicking an unselected clip acts on that clip alone.
-
-Deleting leaves the list where it was. The selection passes to the clip that takes the deleted one's
-place — the next one down, or the one above it when the end of the list is removed — so the list does
-not scroll back to the top, and a bulk delete lands on the first clip after the block it removed.
-Both layouts share that selection, so cards keep their place too.
-
-The quick-paste number for each of the first nine clips is drawn over the bottom-right corner of
-its thumbnail in both layouts, so it never pushes the preview text along.
-
-## When something goes wrong
-
-Failures and confirmations float as a card just under the title bar instead of being inserted into
-the layout, so nothing shifts when one appears — with **Copy** and **Dismiss**. The text is
-selectable too, so a message can be pasted into an issue instead of retyped. The banner reports the
-first problem only; dismissing it lets the next one through.
-
-**A database that was busy.** The history is SQLite, and a streamed or synced data folder — a Google
-Drive drive letter, a network share — cannot host SQLite's write-ahead log: the client moves the
-shared-memory file underneath SQLite, which then reports a `locking protocol` error and stalls. The
-app now checks the folder and keeps a rollback journal there instead (full sync, so a crash cannot
-leave it half-written), and on a normal local disk it keeps WAL as before. Every connection also
-waits up to eight seconds for a lock, so a moment of contention costs a slightly slower query rather
-than an error in the window.
-
-**Media that will not load.** Serving an image no longer touches the database at all: whether a file
-is sealed is answered from the in-memory index, so a screenful of thumbnails and GIFs never queues
-behind a write. A file that still cannot be read — a cloud folder that is busy, or one that has been
-deleted — now draws a **Couldn't load · Retry** card instead of an empty gap, and the reason is
-written to the log (`could not read … for the window`).
-
-**The log.** A packaged app has no console, so the log is also written to a file:
-`%LOCALAPPDATA%\ikept.it\logs\Kept.log`. It records every media file that could not be
-read, every capture that could not be stored, the data folder in use and whether it kept a WAL or a
-rollback journal. Every message the error banner shows is written there too, from the window as well
-as the backend, so a failure the user saw and dismissed can still be looked at afterwards — **Settings
-→ About → Error log → Show in Explorer** opens it.
-
-## Content, saving and dragging
-
-Text that is entirely a link, an email address, a Windows path or JSON is tagged with that shape in
-the list and gains matching actions in the preview pane and the right-click menu: *Open link*,
-*Send email*, *Open*, *Show in Explorer*, and *Format JSON* (a view-only pretty-print — the stored
-payload is never rewritten).
-
-*Save as…* writes the clip into a folder you pick: the stored PNG for an image, a copy of each
-original file for a file list, and a `.txt` (plus an `.html` copy when one was captured) for text.
-Name collisions get a ` (2)` suffix instead of overwriting.
-
-**Markdown notes.** *Export as Markdown note…* writes a text clip into the vault folder chosen in
-*Settings → Markdown*. The filename is `YYYY-MM-DD <first line>.md` (leading Markdown markers are
-dropped and characters Windows cannot name are replaced), the body is copied as-is with line
-endings normalised to LF, and YAML front matter — `created`, `source`, `tags` and the clip id — is
-on by default. The date prefix and the front matter can each be turned off. A selection exports one
-note per text clip and skips images and file lists. The folder must already exist, so a vault that
-moved reports the problem instead of gaining an empty folder, and a clip flagged as a likely
-credential asks before its plain text is written to disk.
-
-Rows and cards can be dragged out of the overlay. Text travels as `text/plain`, images and file
-lists as `text/uri-list`, and the payload is pre-loaded when you hover a row so the drop target
-receives it immediately. Dragging a clip onto a sidebar collection or archive files it there;
-dragging a multi-clip selection files all of the selected clips.
-
-Colour swatches extracted from an image also copy on click and are recorded as colour clips, so
-they appear in the Colors view and in history rather than only reaching the clipboard.
-
-**Dropping in.** Dragging files from Explorer onto the window shows a drop overlay and creates a
-clip on release: a single image becomes an image clip, a single small UTF-8 text file becomes a
-text clip, and anything else becomes one file-list clip of every dropped path. Dropped clips
-dedupe against existing history exactly like copied ones.
-
-**Rich text.** When a source app offers HTML or RTF next to the plain text, both are stored
-(in their own columns) and written back on copy — so pasting into Word or Outlook keeps
-the formatting while everything else still gets the plain text. Turn off *Settings → Pasting →
-Paste with formatting* to paste plain text only.
-
-**Double-click.** Activating a clip with a double click copies it and dismisses the overlay, so the
-next `Ctrl+V` lands in whatever was behind it. *Settings → Pasting → Minimise after double-click*
-(default on) is that dismissal: turned off, a double-click still copies the clip but the window stays
-open, which is what browsing a run of clips wants.
-
-**Auto-clear.** *Settings → Pasting → Clear the clipboard after use* empties the Windows clipboard
-after a copy has been used. The delay is a setting; `0` clears as soon as the overlay hides, with a
-short floor so it cannot race an auto-paste. If anything else has touched the clipboard since, the
-timer leaves it alone rather than destroying something you copied in the meantime.
+`Ctrl+Click` extends the selection, `Shift+Click` takes a range and `Ctrl+A` takes everything visible.
+A bar above the list then offers **Pin**, **Unpin**, **Tag…**, **Collect…**, **Save to…** and
+**Delete**; `Del` deletes the selection and `Esc` clears it. The right-click menu gains *Export N as
+Markdown* (text clips only) and *Add N clips to Stack*, and the selection keeps its place after a
+delete.
 
 ## Settings
 
-On a fresh install, a three-step **setup wizard** opens the first time the window appears. It
-covers the global hotkey, *Start with Windows*, auto-paste, quick paste, image and file capture,
-password-manager exclusions, retention, how likely secrets are handled, and a theme, sounds and the
-image editor.
-Retention is chosen from presets — 500 or 2,000 clips, 1, 30 or 90 days, or forever — or typed in:
-**Custom clips** keeps the newest *n*, **Custom days** forgets anything older than *n* days.
-When KeptCraft is installed the last step offers to make it the image editor, which is the same
-detection **Detect KeptCraft** runs in Settings.
-Choices land in the same settings store as the Settings window and can be changed there later;
-*Settings → About → Setup wizard* reopens the wizard. Upgraded installations are marked complete
-by the store migration and are never interrupted by it.
+Settings open in their own window from the gear in the title bar or *Settings…* in the tray menu, and
+`Esc` closes them. The page is a run of collapsible sections — **About**, Appearance, Activation,
+Pasting, Window, Screen Recording, Measure, Capture, Quick paste, Limits, Retention, Utilities,
+Markdown, Image editor and Storage — with a search box that narrows the page as you type. Name
+matches rank above description matches, and `Esc` clears the filter before it leaves settings. Every
+change is broadcast to the other windows as it is saved, so a theme change repaints the history
+immediately.
 
-The wizard has a window of its own, opened on first run and from Settings: a decorated window with
-a title bar to drag and a close button, and no minimise or maximise buttons, because a three-step
-form has no reason to fill the screen. Closing it on a first run counts as *Skip setup*.
+![Settings](docs/screenshots/settings.png)
 
-Settings open in their own window — the gear in the title bar or *Settings…* in the tray menu
-opens (or focuses) a normal decorated window with minimise, maximise and close buttons, leaving
-the overlay a pure history surface. `Esc` closes it.
+*One row per setting, with a hint wherever the choice needs one.*
 
-The page is a run of collapsible sections, all collapsed each time settings opens, so the whole
-list is readable at a glance instead of a long scroll. Click a heading to unfold it; the choice is
-not remembered beyond the window closing or the app being summoned again, which keeps the page
-predictable. **About** sits first — the version, the update check, the GitHub project link and
-*Run setup* — followed by Appearance, Activation, Pasting, Window, Screen Recording, Measure,
-Capture, Quick paste, Limits, Retention, Utilities, Markdown, Image editor, Sounds and Storage.
+On a fresh install a three-step **setup wizard** opens before this: the summon hotkey, capture and
+privacy choices, secret handling, retention, theme and the image editor. *Settings → About → Setup
+wizard* reopens it at any time.
 
-The search box at the top of the settings page narrows the page to matching settings as you
-type. Name matches rank above description matches, and a section whose own heading matches keeps
-all of its rows. A section that matches always shows its rows, whatever state it was collapsed
-in, and the headings stay in place so it is obvious where a setting lives — `Esc` clears the
-filter before it leaves settings.
+**Storage.** *Data folder → Change…* copies the database and the media to the chosen folder and
+restarts into it; a folder that is missing at startup falls back to the default one. Retention
+accepts hours or days, `0` keeps everything and archived clips are exempt. A folder on a cloud drive
+works — thumbnails are cached locally and reads to the drive are limited and retried.
 
-Because settings live in their own window, every change is broadcast to the other window as it is
-saved, and the main window re-reads them when it regains focus. Switching the theme in Settings
-repaints the history window immediately instead of waiting for it to be reopened.
+**Markdown.** The export folder (empty asks each time), the YAML front matter and the
+`YYYY-MM-DD` filename prefix are each a setting. The folder is never created, so a moved vault
+reports the problem instead of looking successful.
 
-*Storage* holds two long-lived choices besides the housekeeping buttons:
-
-- **Data folder** — *Change…* copies the database and the image files to the chosen folder, then
-  restarts into it. The old copy is deleted on the next start. The location is remembered in a
-  small `storage.json` pointer inside the default app-data folder, because it has to be known
-  before the database can be opened. If the chosen folder is missing at startup (an unplugged
-  drive), the app falls back to the default one rather than refusing to start.
-- **Maximum age** — retention can be expressed in **hours or days**; `0` keeps everything.
-  Archived clips are exempt. Maximum clips and the pinned exemption behave as before.
-
-A data folder on a cloud drive — Google Drive, OneDrive, a mapped network share — works, with one
-allowance made for it. Those drives stream files on demand, so a fast scroll through a few hundred
-rows used to ask for more thumbnail reads at once than the driver would serve, and the ones that
-failed showed up as gaps in the list. Thumbnails the window has read are now kept in a local cache
-under the app's own cache folder, and served from there without touching the history folder at all;
-a read that still has to go to the drive is one of at most four in flight, retried a couple of times
-before it is treated as missing. Full-size images get a small in-memory cache (32 MB, the ones you
-looked at most recently) so stepping through clips with the arrow keys does not re-fetch each one.
-Nothing sealed is ever cached: a vault-sealed image is decrypted per request and never written back
-out. The cache trims itself to 64 MB on startup.
-
-*Markdown* holds the note-export choices:
-
-| Setting | Default | Notes |
-|---|---|---|
-| Export folder | **empty** | The vault notes are written into. Empty asks for a folder at export time; *Clear* goes back to asking |
-| Front matter | **on** | Writes `created`, `source`, `tags` and the clip id as a quoted YAML block |
-| Date prefix | **on** | Names each note `YYYY-MM-DD <first line>.md` |
-
-The folder is never created: if the vault has been moved or its drive unplugged, the export says so
-instead of quietly making a new empty folder and looking successful.
-
-*Settings → Image editor* holds one field: **Command**, the program image clips open in plus any
-arguments it needs. Plenty of editors have to be told *how* to open a file — ShotCraft wants
-`open-annotate --filepath` and a code editor often wants a flag — so the field is a whole command
-line rather than a bare path. `{file}` stands for the image's path, and when the field has no
-`{file}` the path is appended, which is why plain `mspaint.exe` needs nothing typed.
-`C:\Program Files\ShotCraft\shotcraft.exe open-annotate --filepath {file}` is the working example:
-picking `shotcraft.exe` from the file dialog fills in those arguments for you, and they stay editable.
-A program path typed or pasted without its quotes is repaired rather than split at the first space,
-and a version that ends in `.exe` counts even when the file is not there, so a mistake is reported
-with the whole path. Leave the field empty and Kept never offers to edit anything, because
-there would be nothing to launch.
-
-**Detect KeptCraft** fills the field in for you. KeptCraft is the editor this app is built around,
-and nobody should have to know that it wants `open-annotate --filepath {file} --overwrite`. The
-button looks where its installer puts it — the `App Paths` registration first, then
-`Program Files\KeptCraft` and `%LOCALAPPDATA%\Programs\KeptCraft`, then `PATH` — and says so when
-there is nothing installed. The first-run wizard runs the same detection and offers to set it up,
-and Settings → About → *Setup wizard* reopens that offer at any time.
-
-The clip catches up with the editor on every save, not only when the editor closes. Kept notes
-the image file's size and timestamp before launching, then watches that file while the editor's
-window is open: once a save has landed — the stamp reads the same twice in a row, so a half-written
-PNG is never decoded — it decodes what was saved, writes a fresh thumbnail, updates the recorded
-pixel size and tells the list to reload. Saving again in the same session rebuilds again, and an
-editor that hands the file to a copy already running is covered by the same watch, until it gives up
-after half an hour. The new files get new names, so the webview never shows a cached thumbnail, and
-an editor session that saved nothing costs one `stat` and no work at all. A clip's recovered GIF or
-video is left as it was: the still was edited, not the moving asset.
-
-ShotCraft is the exception: it never saves over the file it was handed, and its `open-annotate` has
-no flag for where the result goes — every Save writes a new, timestamped PNG into the folder named by
-`save_dir` in `%APPDATA%\shotcraft\settings.json`. That folder is read when the editor is launched,
-and the newest image that appears there afterwards is taken as the edit, once it has settled the same
-way. Pointing that setting at Kept's own media folder works too; the files Kept writes into
-it are never mistaken for the editor's output, and a folder that has gone ten minutes without a new
-export stops being watched, so a later screenshot cannot be adopted by mistake. The exported file is
-left where the editor put it.
+**Image editor.** One field holds a whole command line. `{file}` marks where the clip's path goes and
+is appended when missing, so `mspaint.exe` works as typed;
+`C:\Program Files\KeptCraft\keptcraft.exe open-annotate --filepath {file}` is the working example,
+and **Detect KeptCraft** fills it in. Kept watches the file while the editor is open and refreshes the
+clip on every save, including ShotCraft's habit of writing a new file each time.
 
 ## Appearance
 
@@ -646,7 +472,7 @@ decode with the bundled PNG/JPEG codecs get a picture; anything else keeps the f
 Images are also read with the Windows OCR engine in the background; the recognised text is
 indexed for search, shown under the preview, and copyable from a button on the card, where the
 copy lands in the history as its own text clip so it can be pinned, tagged or searched later.
-Images are additionally scanned for faces, also in the background — see [Faces](#faces).
+Images are additionally scanned for faces, also in the background — see [Facial recognition](#facial-recognition).
 
 Themes are stored as a palette of twelve color tokens. Rather than shipping two stylesheets, the
 selected palette is written onto the document as `--color-*` custom properties, which is what the
@@ -668,12 +494,20 @@ stays text, so one stray hashtag does not hijack the swatch view.
 
 Color clips render as a filled swatch with the copied code painted on top (the label switches
 between black and white based on the sample's luminance), keep their normal text payload for
-search and copy, and are listed under **Colors** in the sidebar. The preview pane and every
-thumbnail show both the hex and `rgb()` values. `Space` on a colour opens it at the size of the
-panel: the swatch fills the left, and the right lists the same colour as **HEX**, **RGB** and
-**HSL**, each with its own copy button — the copy button takes the value as written, so pasting
-`hsl(228, 100%, 71%)` into a stylesheet needs no conversion. There is nothing to resize or edit in
-that preview, so those controls are left out of it.
+search and copy, and are listed under **Colors** in the sidebar.
+
+![Colour clips in card view](docs/screenshots/colors-cards.png)
+
+*Colour clips in card view: the swatch, the copied code and its `rgb()` value.*
+
+`Space` on a colour opens it at the size of the panel: the swatch fills the left, and the right
+lists the same colour as **HEX**, **RGB** and **HSL**, each with its own copy button — the copy
+button takes the value as written, so pasting `hsl(228, 100%, 71%)` into a stylesheet needs no
+conversion.
+
+![A colour in the preview](docs/screenshots/colors-preview.png)
+
+*A colour opened in the preview, with a copy button per format.*
 
 For image clips, the preview pane's **Color scheme** box lists the dominant colors of the
 screenshot. It fills in on its own when an image opens — the extraction runs off the UI thread and
@@ -682,9 +516,12 @@ reading the image again. Colors are clustered in OKLab, so "close" means close t
 most two of the entries may be near-neutral: a screenshot is mostly white, grey and black, and on
 raw frequency those used to fill every slot before an accent was ever reached. Click a swatch to
 copy its hex value; the scheme stays on screen while you click through the others.
-**Make Color Palette** files the scheme into a new archive named **Color Palette 1**,
-**Color Palette 2** and so on, so it can be kept as a set. It ticks like a copy, and the
-confirmation names the archive it went into — *Saved 5 colors to “Color Palette 3”.*
+
+> **Tip — keep a palette.** **Make Color Palette** files the scheme into a new archive named
+> **Color Palette 1**, **Color Palette 2** and so on. Archives stay out of the history and survive
+> every bulk delete and retention limit, so a palette you want to keep is safe there; right-click
+> the archive in the sidebar to open its folder in Explorer. The confirmation names the archive it
+> went into — *Saved 5 colors to “Color Palette 3”.*
 
 The same whole-payload test classifies links, email addresses, Windows paths and JSON. Those clips
 are labelled **Link**, **Email**, **Path** or **JSON** in the list and gain the actions that fit
@@ -763,73 +600,28 @@ clip whose payload is a URL.
 
 ### Quick preview
 
-`Space` with one clip selected opens a larger view over the list, with the history dimmed and
-blurred behind it. The panel opens sized to the picture itself — a small screenshot is not floated
-in a large empty frame — and a picture too big for the screen opens zoomed out far enough to show
-all of it (the zoom floor is 10%), with the corner grip still available to resize. Its size is always
-measured against the room the window actually has, in the same units the panel is drawn in, so the
-header above and the zoom and edit controls below stay on screen at any text scale; shrinking the
-window after it is open shrinks the panel with it rather than pushing those controls past the edges.
-Images fill the
-overlay with zoom controls (10–400%) centred at the bottom, and a
-reset that returns to 100%; the mouse wheel zooms too, one step per burst so a trackpad does not fly
-through the range. Zoom changes animate quickly, and are instant when Windows is set to reduce
-motion. A zoomed image is moved by dragging it around rather than with scrollbars, and the drag is
-clamped so the image can never be lost off the edge. With an editor chosen, an **Edit** button in
-that footer hands the image file to it. A video clip opens in the same overlay as a player with the
-usual transport controls and a scrubbable timeline: the media scheme answers range requests, so
-seeking a long clip does not wait for the whole file, and the still frame is the poster until it
-starts. Text clips open in a larger monospace panel
-with an **Edit** button and a lighter editing surface, so the field reads as a field: the edits
-save themselves a moment after typing stops and again when you close, so the overlay never holds
-unsaved input. A Markdown clip also gets the same formatting bar as the Add clip window while it is
-being edited. A clip flagged as a possible secret stays blurred until you reveal it, and cannot be
-edited while it is hidden. `←` and `→` step to the previous or next clip and show its preview, moving
-the selection with it, so the list can be browsed without closing the overlay; file lists are
-stepped over because they have no quick preview, and the dimmed backdrop stays up between clips so
-stepping never flashes the list behind. `Space` or `Esc` closes the overlay. Confirmations
-such as saving a color palette are repeated inside the overlay, because it covers the strip they
-would otherwise appear in.
+`Space` with one clip selected opens a larger view over the history, dimmed and blurred behind it,
+sized to the content itself. Images get zoom controls (10–400%, wheel or footer, with a reset) and an
+**Edit** button when an editor is set; videos get a player with a scrubbable timeline and the still
+frame as the poster; text opens in a larger editor that saves as you type, with the Markdown toolbar
+when the clip is Markdown. `←`/`→` browse clip by clip without closing the overlay, a secret stays
+blurred until revealed, and `Space` or `Esc` closes it.
 
 Clicking a clip moves the keyboard into the list, so `Space`, the arrow keys and `Del` act on the
-selection rather than on the search box. The search box takes the caret when the window is summoned
-— the tray icon, `Alt+V`, or the history pane coming back into view — so a summoned window can be
-typed into at once, while clicking back into the window later leaves the keyboard where it was.
-Typing a query still goes to the search box as before.
+selection rather than on the search box. The search box takes the caret when the window is summoned.
 
 ### Sticky clips
 
-**Make Sticky** in a clip's right-click menu opens that clip in a window of its own, small and
-always on top, so the thing you copied can sit beside the page you are pasting into. It opens sized
-to the content: an image at its own dimensions, scaled down only when it would not fit the screen;
-text at the width of its longest line and the height of its line count; a file list at the length of
-its paths. A thin header drags the window anywhere and closes it, the edges resize down to 220 × 160,
-and the same clip opens the existing window again rather than a second copy. Text, images, animated
-GIFs, videos and file lists all work, a clip marked secret stays masked, and the window follows the
-clip as it changes — locking the vault blanks its media, an edit shows the new text.
+**Make Sticky** opens a clip in a small always-on-top window sized to its content, so the thing you
+copied can sit beside the page you are pasting into. Images zoom and drag, text stays selectable,
+Markdown opens rendered with a **Plain**/**Markdown** toggle, links open in the browser and videos
+loop. The window follows the clip as it changes — locking the vault blanks its media, an edit shows
+the new text — and opening the same clip again raises the window already on screen.
 
-What each kind of note does once it is up:
-
-- **Images** zoom with the wheel or with the −/%/+ control in the bottom-right corner, from a quarter
-  size to four times, and the change eases in rather than jumping. Above 100% the picture grows
-  inside the window — it is scaled against the window's width, not the window's frame, so zooming
-  never resizes the note — and is dragged around by its own body, clamped so it can never be lost
-  off the edge. Clicking the percentage resets both the zoom and the drag.
-- **Text** is selectable, so a line can be copied out of the note without opening the clip.
-- **Markdown** opens rendered, with a **Plain**/**Markdown** toggle in the header for the source,
-  matching the quick preview.
-- **Links** open in the default browser from the arrow in the header, or with a double-click on
-  the address itself.
-- **Colours** get the same panel as the quick preview: the swatch, then **HEX**, **RGB** and **HSL**
-  with a copy button each.
-- **Files** list every path with an open button beside it, and the paths are selectable.
-- **Videos** play straight away and loop, and show their transport controls while the pointer is
-  over them — the chrome would otherwise sit on the picture for as long as the window is up.
-
-Transparent pictures — a PNG with alpha, or a GIF whose frame is — sit on a faint checkerboard so the
-see-through parts read as see-through rather than as the panel's colour. The grid is painted behind
-the picture box itself, not behind the panel, so an opaque screenshot covers it completely and the
-quick preview shows the same thing.
+| | |
+|---|---|
+| ![Sticky image](docs/screenshots/sticky-image.png) | ![Sticky note](docs/screenshots/sticky-markdown.png) |
+| *An image note with its zoom control.* | *A Markdown note, rendered, with the source one click away.* |
 
 ## Collections, archives and tags
 
@@ -898,31 +690,17 @@ more.
 
 ## Utilities: emoji
 
-*Utilities → Emoji* opens a searchable library of emoji, one category at a time (the chips under
-the search box switch sections, and *All* shows everything). The search matches names and keywords
-("rocket", "thank you", "deploy") across every category, clicking an emoji puts it on the
-clipboard, and right-clicking pins it to **Favourites** at the top or removes it from Favourites
-while it stays in the library. Favourites are stored with the rest of the settings. The search box
-has a clear button, and the preview-size slider above the grid resizes cells just like the GIF
-utility; the size is remembered between sessions.
+*Utilities → Emoji* opens a searchable, category-by-category emoji library. The search matches names
+and keywords ("rocket", "thank you", "deploy"); click an emoji to copy it, or right-click to pin it
+to **Favourites**. Anything copied this way lands in the history with *Emoji* as its source.
 
-Anything the app copies for you lands in the history as well — an emoji, a HEX/RGB/HSL value from a
-colour preview, a whole colour scheme, or a message you copied to paste into a report. Its Source
-column names where it came from, so a copied emoji reads as *Emoji* and a copied value as *Color*,
-rather than appearing the next time the clipboard watcher ticks.
+![Emoji library](docs/screenshots/emoji.png)
 
-The whole library draws from bundled [Twemoji](https://github.com/jdecked/twemoji) artwork (v17.0.3,
-by jdecked and other contributors, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — see
-`public/emoji/twemoji/NOTICE.txt`), so cells no longer depend on how Windows rasterises colour
-glyphs. The clipboard still receives the Unicode character, not an image. If an asset is ever
-missing, the cell falls back to the font glyph.
-
-The grid is virtualised and opens on a single category, so the first paint builds about a hundred
-buttons instead of the whole library. Row positions are precomputed for a binary-search scroll
-window and scroll events are coalesced to one render per frame.
-
-Regional-indicator flags are left out on purpose: Windows has no flag glyphs, so they would render
-as bare letter pairs.
+The artwork is bundled [Twemoji](https://github.com/jdecked/twemoji) (v17.0.3, by jdecked and other
+contributors, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — see
+`public/emoji/twemoji/NOTICE.txt`), so the cells do not depend on how Windows rasterises colour
+glyphs; the clipboard still receives the Unicode character. Regional-indicator flags are left out
+because Windows has no flag glyphs.
 
 ### Colour schemes from an archive
 
@@ -982,16 +760,21 @@ hidden is already on screen when you bring it back. The text of the
 link is still stored, so it stays searchable with `type:url` and keeps its *Open link* action. A
 sentence that merely mentions an address is left alone.
 
-## Adding clips by hand
+## Add a clip note
 
 **Add clip** in the toolbar opens a small **New clip** window: type or paste the text, optionally
-with the Markdown buttons (bold, italic, inline code, heading, bullet list, link), then **Save clip**
-or `Ctrl+Enter`. The text is stored as a clip without touching the clipboard, so the capture thread
-never sees it and no second row appears. The window keeps its draft when it loses focus, and closing
-it discards the draft. Whether the text is Markdown is decided when it is stored: a heading, fence,
-quote, list, table, link or paired emphasis marks the clip as Markdown, and it gets a **Markdown**
-badge plus a *Text → Markdown* sub-view and a `type:markdown` (or `type:md`) filter. Everything else
-stays plain text.
+with the Markdown buttons, then **Save clip** or `Ctrl+Enter`. The text is stored without touching
+the clipboard, so the watcher never sees it and no second row appears. Whether it is Markdown is
+decided when it is saved — a heading, fence, quote, list, table, link or paired emphasis earns a
+**Markdown** badge and a `type:markdown` filter. Closing the window discards the draft.
+
+![The New clip window](docs/screenshots/add-clip.png)
+
+*Type or paste, optionally format it, and save without touching the clipboard.*
+
+![A note on a clip](docs/screenshots/add-clip-note.png)
+
+*Every clip also takes a note in the preview pane; it is saved with the clip and searched.*
 
 ## Notes and editing
 
@@ -1016,276 +799,54 @@ view with the new swatch selected.
 
 ## Screen capture
 
-The eyedropper and the capture buttons sit in the title bar, separated by hairline dividers:
-sampling a colour, taking a screenshot and opening settings are three different jobs.
+One capture button in the title bar repeats the kind you used last; its chevron opens all four —
+**Region**, **Window**, **Full screen** and **Scrolling** — plus **Capture the previous area** and
+**Capture Delay Settings…**. Window captures read UI Automation so the page comes out without the tab
+strip or border, scrolling capture wheels the window and stitches only the new rows, and a delay
+counts down in the corner so a menu can be opened first. The result is an ordinary image clip —
+thumbnail, OCR pass, history entry — and it is left on the clipboard, the way the Snipping Tool
+leaves its own.
 
-The four capture kinds share one button rather than sitting side by side: the button shows the kind
-you used last, and the chevron beside it opens a menu of all four with their icons and labels, ticked
-against the current one. Clicking the button repeats the last kind — a region capture on a fresh
-install — so a repeated screenshot is a single click and the rarer kinds are one more. The menu
-closes on an outside click, on Esc (which returns focus to the button) and on a window resize, and
-the arrow keys walk it.
+![The capture menu](docs/screenshots/capture-menu.png)
 
-The menu also carries **Capture the previous area**, which repeats the rectangle the last region,
-window or full-screen capture covered — useful for taking the same spot twice in a row. It borrows
-an area instead of choosing one, so it never becomes the button's remembered kind. The area lives
-for the session: a fresh start has nothing to repeat until the first screenshot.
+*The chevron opens every capture kind; the tick marks the one the button repeats.*
 
-The sidebar's capture strip uses the same split button and remembered kind while the sidebar is
-expanded. In the collapsed rail the four capture kinds sit as separate icons, followed by the
-previous-area icon and the capture delay's clock — the rail has no menu to hang them off — and then
-the record button, with no divider between them, so the capture tools read as one group. The
-eyedropper and ruler sit together above them in both layouts.
-
-The capture group takes screenshots without borrowing another tool:
-
-- **Region** dims every monitor and lets you drag a rectangle; the size in pixels follows the
-  pointer. The pixels are frozen *before* the dimmer appears, so the overlay can never end up in
-  the image.
-- **Window** turns the cursor into a hand over whatever window is underneath and draws a frame
-  around what a click will take. The frame follows the pointer continuously and skips the desktop,
-  the taskbar and Kept itself.
-
-  What it takes depends on where the pointer is, and a chip beside the frame says which: over the
-  page or document it captures the **content** — no tab strip, no address bar, no window border —
-  over the window's own chrome it captures the **whole window**, and over a dialog or a named
-  control it captures that element on its own. The content rectangle comes from UI Automation, falls
-  back to the window's client area and then to the window itself, so an application that refuses to
-  describe itself still captures what it always did. Windows 10/11 also give every window an
-  invisible resize border that `PrintWindow` faithfully includes, so the pixels are cropped to the
-  frame the desktop actually shows — no stray strip down the left, right or bottom edge. A window
-  that refuses to render itself is read from the screen instead.
-- **Full screen** needs no aim at all: the app hides and every monitor is captured as one image,
-  the way the system screenshot tool's fullscreen mode does.
-- **Scroll** takes a window's whole length, including the part that never fits on screen: pick the
-  window and it is wheeled a notch at a time while the app compares each frame with the one before
-  it. Consecutive frames differ by nothing but a vertical shift, so the move is measured exactly and
-  only the rows that were not already there are appended — no guesses, and no drift.
-
-  Frames are read from the desktop rather than by asking the window to render itself: a
-  GPU-composited window can hand back a stale tile or a half-painted band off-screen, and no amount
-  of matching can stitch that. Each step waits for the window to *change* and then to *stop*
-  changing, so a frame caught mid-animation is never stitched in. While the capture runs the desktop
-  is frozen — clicks and keystrokes are swallowed — and a banner says
-  **Capturing scroll — press Esc to end**. The banner is excluded from screen capture itself, so it
-  can sit over the window being captured instead of having to be squeezed into the gap beside it,
-  and **Esc** stops the capture at any point and keeps everything collected so far.
-
-  The move is measured by **mean absolute difference**, not by matching pixels: a compositing
-  browser re-renders glyphs with sub-pixel differences as they scroll, so almost nothing matches byte
-  for byte even at the true offset, while the difference still bottoms out sharply there. Rows and
-  columns that are identical at the same screen position — title bar, sidebar, gutter — carry no
-  offset at all and are left out of the comparison, which is what a split-pane window needs. If a
-  frame does not line up, the window is told again — a wheel message posted straight to it, then Page
-  Down — and only then does the run give up.
-
-  Only the columns that belong to the page are appended, so a fixed sidebar is drawn once and held
-  at the fold instead of scrolling down the image beside content it was never part of.
-
-  The scroll bar down the right edge is window furniture that moves with every frame, so it would
-  otherwise be repeated all the way down the image. It is recognised by its own shape rather than by
-  a width taken from the system — a band of columns painted as one flat track with a single stretch
-  of another colour inside it for the thumb — measured once from the first frame, and every frame is
-  then read without it. A page margin is flat but has no thumb in it, and an overlay-style bar has
-  the page showing through, so both are left alone; the log records which width was dropped.
-
-  The pointer is put out of the page's way once, when the capture starts, and put back where it
-  was when the capture ends. The wheel still has to be sent with the pointer over the window, so
-  each step's burst takes it there and returns it in the same instant — invisible, where it used to
-  sit in the middle of the page for the whole step and make the cursor flick up and down. It never
-  ends up in the frames either: they are read with a bit block transfer, which does not include the
-  cursor.
-
-  A step that leaves the window unmoved by all three methods means there is no page left, so it
-  stops, up to 200 steps or 20,000 pixels tall, and keeps what it has rather than failing. A step
-  gives the wheel a little under a second to start the page moving and the two fallbacks less than
-  half of that each, so reaching the end costs about two seconds rather than the seven it used to.
-
-  Fixed furniture is held at the fold instead of being repeated down the image, and only a band of
-  columns at the *edge* of the page counts as furniture: an isolated column that happens to match
-  between two frames — the white edge of a code block, say — used to be held too, dragging that one
-  pixel all the way down as a thin vertical streak through the middle of the picture.
-
-The colour of all of this chrome — the region border and handles, the window frame, the chips and
-the eyedropper's crosshair — is a setting, **Settings → Capture → Outline colour**, defaulting to a
-deep red (`#d60000`) because a red frame reads against more of what is on screen than the blue it
-used to be. It is chrome only: the captured pixels never contain it. Whatever text sits on an
-outline flips between light and dark so it stays readable on any choice.
-
-**Hide while capturing** sits beside it and is on by default: the app gets out of the way of its own
-screenshot, so it never appears in one. Turned off, nothing is hidden — the frozen screen, the whole
-screen and every monitor include Kept — and the window picker stops refusing the app's own
-windows, so a screenshot of Kept itself is one click like any other window.
-
-**Delayed screenshots.** The last item in the screenshot menu is **Capture Delay Settings…**, with the
-current value beside it — *Off* until it is set. It asks for a number of seconds (0, 3, 5 and 10 are
-offered, anything up to a minute is accepted), and every screenshot then counts down that long
-*after* the area has been chosen and before the picture is taken: pick the region or the window
-first, then open the menu, hover the tooltip or move the window that has to be in the shot. The
-number counts down in a ring in the bottom-right corner of the primary screen, and the rest of the
-desktop stays usable for the whole countdown — the window never takes focus, so typing keeps going
-where it was going. The ring and its number are drawn in the **Capture → Outline colour**, so the
-countdown and the frame that follows it read as one tool, and each second starts with the same short
-tick, so a countdown that is easy to miss with your eye on the window is still heard. Clicking the
-ring cancels the countdown *and* the shot, and so does `Esc`, from anywhere: while a countdown runs
-the app holds a temporary system-wide `Esc` and releases it the moment the countdown ends, which is
-the same trick the ruler's lock uses. The number is a setting, so it survives a restart, and it
-applies to the four screenshot kinds and to their shortcuts; the color picker and the ruler are not
-screenshots and never wait.
-
-**Shortcuts per capture type.** *Settings → Activation → Capture shortcuts* gives region, window, full
-screen, scrolling, the previous area, the color picker and the onscreen ruler a combination each,
-recorded by clicking the field and pressing the keys. Empty means none. A combination Windows refuses because another
-application owns it is reported and the previous one stays active. The same section carries **New
-clip shortcut**, which opens the small New clip window from anywhere; it is empty by default and the
-first-run wizard offers it too. **Paste stack shortcut** sits beside it, `Alt+Shift+V` by default,
-and is the key that pastes the next queued item; clear the field to paste only from the stack's
-panel. A **Default capture** row underneath chooses what
-the header button — and the **Print Screen** toggle beside it — start, and **Print Screen** hands
-that key over from the Snipping Tool, restoring Windows' setting exactly as it was found when turned
-back off. Recording Print Screen works even though Chromium reports that key on key-up only.
-
-Region and Window swallow the click that ends them, so the window underneath never reacts. `Esc`
-cancels a region or window capture, and a capture that lands plays the same tick a copy does. The
-result is an ordinary image clip — the same thumbnail, OCR pass, de-duplication and history entry a
-copied screenshot gets — and the window comes back with it selected. The capture is also left on the
-clipboard, the way the Snipping Tool leaves its own, so the next `Ctrl+V` pastes the screenshot
-rather than whatever was copied before it. Everything captured this way
-is also grouped under **Images → Screenshots** in the sidebar.
+**Hide while capturing** keeps the app out of its own screenshot, and the capture outline colour is
+chrome only — the captured pixels never contain it. Every kind has an optional shortcut in *Settings
+→ Capture → Capture shortcuts*, and **Print Screen** can be handed over from the Snipping Tool.
 
 ## Onscreen ruler
 
-The ruler opens from the icon immediately right of the eyedropper in the title bar and the sidebar,
-from *Onscreen ruler* in the tray menu (a top-level item, beside *Color Picker*), or from its opt-in
-shortcut in *Settings → Activation → Capture shortcuts*. It hides Kept, covers **the primary
-monitor** and stays up until it is closed. The other monitors are left alone on purpose: one window
-stretched across two screens of different shapes and scales measures neither of them, which is what
-used to put guides and snapping in the wrong place. Everything it measures is in screen pixels of that
-monitor.
+The ruler opens from the title bar, the sidebar, the tray menu or its opt-in shortcut and covers the
+primary monitor. Select, distance, box and angle tools give pixel readouts; guides are dragged from
+the edge rulers; endpoints snap to windows, colour edges, guides or a grid (`Alt` bypasses snapping,
+`F5` refreshes the snapshot). The padlock makes it click-through, and **Copy** writes the active
+measurement to the clipboard and to history in px, DIP or both.
 
-- The toolbar is icon-only; hover any button for its name and shortcut. Select (`V`), distance (`D`),
-  box/area (`B`), angle (`A`), guides (`G`), snapping (`S`), units, copy (`C`), lock (`L`) and close.
-- Distance drags show the signed horizontal delta with Δx × Δy and length underneath; boxes show
-  width × height, area and perimeter; angles take three clicks and show the degrees between the rays.
-- Drag from any edge ruler to place a guide; drag it back into the edge to remove it.
-- Endpoints snap to other measurement points, guides, window borders, colour edges in a fresh screen
-  snapshot, or a grid. Hold `Alt` while dragging to bypass snapping, and press `F5` to refresh the
-  snapshot after the desktop changes.
-- The padlock makes the overlay click-through so the applications underneath stay usable. `Esc`
-  unlocks it and a second `Esc` closes it; while unlocked, one `Esc` closes it.
-- **Copy** writes the active measurement to the clipboard and to history as *Screen ruler* — physical
-  pixels, DIP or both, in single-value, width × height, CSS or JSON form. Units, copy format,
-  snapping, guides and the edge rulers live in *Settings → Measure*.
-- Drag the toolbar by its grip to move it; the position is remembered.
+![The onscreen ruler](docs/screenshots/ruler.png)
 
 ## Screen recording
 
-The record button appears in three places: the sidebar's capture strip (the filled dot, after the
-capture icons), the title bar beside the capture group — which follows the same show/hide setting as
-the screenshot buttons — and the global shortcut. Each opens the same recording bar: a small
-frameless panel at the top of the screen. Its top strip is a drag handle, so the bar can be moved
-out of the way of whatever it is recording; the gear at its right opens
-**Settings → Screen Recording** already expanded and scrolled to, and the cross closes the bar. That
-strip is deliberately half the height of the buttons below it — it carries no information, only the
-grab area and the two window commands.
+The record button — in the sidebar's capture strip, in the title bar and on its optional shortcut —
+opens a small always-on-top bar: **Whole screen**, **Window**, **Region** or **Fixed size**, with sound and
+pointer switches. Once recording starts the bar becomes a timer with pause and stop, stays above other
+windows while the app is minimised, and pauses at a keyframe so resuming costs no frames.
 
-The bar is one row of large controls: the four recording modes, the size dropdown, then the sound and
-pointer switches at the right, behind a hairline divider. The switches are icons only, pressed when
-they are on, with their state and name in the hover label; a second row appears only when it has
-something to say — the audio device list when sound is on, the width and height fields when the size
-is **Custom…**, and an error when one needs reading.
+![The screen recording bar](docs/screenshots/record-bar.png)
 
-- **Whole screen**, **Window** and **Region** are the three pickers, in that order: the whole desktop
-  starts at once, while window and region reuse the screenshot pickers so the frame or drag behaves
-  exactly as it does for a still.
-- **Fixed size** records a frame of a known size the user places. The dropdown beside it offers
-  1920 × 1080, 1280 × 720, 854 × 480 and **Custom…**, which reveals a width and height field for any
-  other size; the numbers are remembered. Choosing it dims the desktop and shows the frame at its real
-  size — a click places it where the pointer is, a drag moves it, and **Record** in its bottom-right
-  corner starts the recording (`Enter` does the same). `Esc` or a right-click puts everything back
-  without recording anything.
-- **Audio** is a switch. Off is silent video; on reveals the source dropdown, which lists the
-  DirectShow devices FFmpeg can see — a loopback device such as *Stereo Mix* records what the machine
-  plays, a microphone records the room. Windows has to have the device enabled in Sound settings
-  before it appears, and the list is read from FFmpeg 9's flat tagged list as well as the older
-  grouped one.
-- **Pointer** is a switch too, pressed when the cursor is drawn into the frames. Both switches are
-  icons only and sit together at the end of the first row, so their state reads at a glance without
-  costing the bar a second line.
+The finished MP4 arrives as an ordinary video clip — poster frame, player, *Media → Screen
+recordings* — and is put on the clipboard as a file. **Export as GIF** offers four sizes. FFmpeg is
+the only external program Kept uses, and *Settings → Screen Recording → Install FFmpeg* fetches it
+with winget when it is missing; the section also holds the audio source, the frame rate, the pointer
+switch and the record/stop/pause shortcuts.
 
-Once a recording starts the bar becomes the floating controls: a pulsing dot, the elapsed time,
-pause/resume and stop, and it stays above other windows so it stays reachable while the app itself
-is minimised. The outline of the recorded area blinks so it is obvious what is being captured, the
-frame is excluded from the recording itself, and a click plays as it starts. Pausing closes the
-current file at a keyframe and resuming opens the next one, so the pause costs no frames and no
-quality: the segments are joined with a stream copy when the recording stops.
+## Facial recognition
 
-The finished MP4 arrives in the history as an ordinary video clip — poster frame from the recording
-itself, player, camera badge, the **Video** view, and both *Copy Video File* and *Copy Video URL* in
-its right-click menu — and it is put on the clipboard as a file so the next paste is the recording.
-It is named for what it is rather than for its shape: a row reads *1920 × 1080 - Screen Recording*
-instead of *1920 × 1080 image*, and it files itself under **Media → Screen recordings** beside the
-screenshots. The media lives beside the database like every other clip, so retention, the vault and
-the storage folder all apply to it unchanged.
-
-**Export as GIF.** Right-clicking a video clip offers *Export as GIF* with **Low (480 px), Medium
-(720 px)**, **High (1080 px)** and **Original resolution** — the first three pair a width with a frame
-rate (10, 15 and 24 frames a second), and the last leaves the video at the size it was recorded.
-FFmpeg builds a palette from the clip and applies it in the same pass, so a screen recording
-keeps its flat colours instead of banding. The conversion runs on a background thread, so the window
-keeps responding while a long clip encodes, and the status bar shows its progress with a **Cancel**
-button that kills FFmpeg rather than waiting for it. The finished GIF arrives as a new clip in the
-history, filed under the *GIFs* view with the first frame as its poster — so copying it is the same
-menu entry every image has, and the clip you converted from is left untouched. *Save to a file…* in
-the same submenu writes the GIF wherever the save dialog points instead, using the frame rate and
-width from *Settings → Screen Recording → GIF export* (twelve frames a second and 720 pixels by
-default; a width of zero keeps the video's own size).
-
-The progress bar is keyed by clip id, so two conversions started in a row cannot move each other's
-percentage, and cancelling one leaves the other alone.
-
-**FFmpeg** is the encoder, and it is the only external program the app uses. It is looked for where
-the setting points, then on `PATH`, then in the folder a winget install leaves it in — which is not on
-`PATH` until the next sign-in, so an install made a moment ago already works. When none is found the
-recording bar and the settings section both offer **Install FFmpeg**, which runs winget for
-`Gyan.FFmpeg` and then re-checks. `Settings → Screen Recording` also carries the audio source, the
-frame rate (15, 24, 30 or 60), the pointer switch and an explicit encoder path for a build kept
-somewhere else.
-
-Recording shortcuts (*Record*, *Stop*, *Pause*) are in the same section and work from any
-application, which is the point of them: starting a recording should not need the app in front. The
-*Record* key starts whatever mode the bar last ran.
-
-## Faces
-
-Image clips are scanned for faces once, on a background thread, by a detector that runs entirely
-on this machine: YuNet, the 227 KB model from OpenCV's Zoo, executed by [tract], a pure-Rust ONNX
-interpreter. The model ships inside the executable, so there is nothing to download, no extra DLL,
-no service and no network call — the same guarantee as the rest of the app.
-
-```toml
-tract = { version = "0.23", default-features = false, features = ["onnx"] }
-```
-
-What it does:
-
-- The image is letterboxed to the model's 640×640 input, keeping its aspect ratio and padding the
-  spare room with black, converted to the BGR order and 0–255 range the model was trained on.
-- The three detection heads (strides 8, 16 and 32) are decoded into boxes, scored by the geometric
-  mean of the class and object predictions, and overlapping boxes are collapsed with IoU-0.3 NMS.
-- Only the count is kept, in `face_count` on the clip row. Sizes come back in the source image's
-  pixels, so nothing is stored that could be used to identify anyone: this is detection, not
-  recognition, and faces are never compared between clips.
-
-The result shows up as **Images → People** in the sidebar, and as a *People* row in the preview
-pane (`2 faces found`). Detection is a settings toggle — *Capture → Detect faces*, on by default —
-and a failure is logged rather than surfaced: a capture is never lost because the detector could
-not run. Turning the toggle off stops new work; turning it back on rescans whatever has not been
-looked at, in the background, at the next start.
-
-Costs, measured on the development machine: about 90 ms to parse and compile the model once per
-run, then 85–100 ms per 640×640 pass — comparable to the OCR pass it sits beside, and never on the
-UI thread.
+Image clips are scanned once, on a background thread, by YuNet — the 227 KB model from OpenCV Zoo,
+executed by [tract], a pure-Rust ONNX interpreter. The model ships inside the executable, so there is
+nothing to download, no service and no network call. Only a count is kept, never an embedding, so a
+database reader cannot match one clip's face against another; the result appears as **Images →
+People**, and *Capture → Detect faces* turns the scan off.
 
 [tract]: https://github.com/sonos/tract
 
@@ -1414,38 +975,6 @@ garbage; `key.bin` is kept in that case so a later attempt can retry.
 Respecting opt-outs: copies flagged with `ExcludeClipboardContentFromMonitorProcessing`, or whose
 `CanIncludeInClipboardHistory` / `CanUploadToCloudClipboard` is zero, are ignored. This is how
 password managers mark secret material, and the setting is on by default.
-
-## Notable design decisions
-
-- **Polling the clipboard sequence number** (`GetClipboardSequenceNumber`) instead of listening for
-  `WM_CLIPBOARDUPDATE`. One cheap syscall per tick costs nothing, and it avoids a second
-  message-only window competing with Tauri's event loop.
-- **Timestamps are monotonic, not wall-clock.** Every write is stamped strictly greater than the
-  current maximum, so "the clip you picked moves to the top" holds even when two writes land in
-  the same millisecond.
-- **A suppression latch, not an app-name check, prevents feedback loops.** When the app writes to
-  the clipboard it records the content hash and drops the next matching capture. Skipping capture
-  whenever the window had focus would silently lose anything copied out of the preview pane.
-- **Auto-paste is opt-in.** Injecting keystrokes into other applications is behaviour a user should
-  choose. Scan codes accompany virtual keys so the synthetic input also works in applications that
-  read raw hardware input.
-- **A frameless window moves on a drag threshold, not on a press.** Handing the move to Windows on
-  the first `mousedown` enters a modal move loop before anything has moved, and Windows paints the
-  window in its translucent "being moved" state — so a plain click on the title bar flashed the whole
-  window. `lib/windowDrag` waits for four pixels of travel (`SM_CXDRAG`, what a real title bar uses)
-  before it starts the move.
-
-## Feature tracking
-
-`docs/features.json` is the source of truth for which features are in the backlog, planned, in
-progress, blocked or shipped. Each entry has an id, a title, an area, a status and optional notes and references to
-the files that implement it.
-
-The **Kept Feature Tracker** canvas (`.github/extensions/copypaste-feature-tracker/`) edits
-that file from a board view, and its `list_features`, `add_feature`, `update_feature`,
-`remove_feature` and `summarize_features` actions let Copilot keep the board current. The canvas
-validates the format marker and every record before writing; a file it cannot parse is reported
-instead of being overwritten.
 
 ## Releases and automatic updates
 
