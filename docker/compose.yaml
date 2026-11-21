@@ -1,0 +1,40 @@
+name: kept-dev
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: dev
+    image: kept-dev:latest
+    container_name: kept-dev
+    working_dir: /workspace
+    # Chromium and WebKit both want a decent /dev/shm.
+    shm_size: 1gb
+    init: true
+    ports:
+      - "6080:6080"   # noVNC - the desktop in a browser tab
+      - "5173:5173"   # Vite dev server
+      - "1420:1420"   # Tauri devUrl
+    environment:
+      DISPLAY: :99
+      KEPT_SCREEN: 1920x1080x24
+      # WebKitGTK has no GPU here; these keep it on llvmpipe and stop the
+      # blank-window bugs.
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    volumes:
+      - ..:/workspace
+      # Windows-linked source is slow and the binaries are the wrong platform,
+      # so both caches live in volumes instead of the bind mount.
+      - node_modules:/workspace/node_modules
+      - tauri_target:/workspace/src-tauri/target
+      - dist:/workspace/dist
+      - chromium_profile:/root/.cache/chromium
+
+volumes:
+  node_modules:
+  tauri_target:
+  dist:
+  chromium_profile:

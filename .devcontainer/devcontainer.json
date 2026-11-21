@@ -1,0 +1,22 @@
+{
+  "name": "Kept (Linux desktop)",
+  "dockerComposeFile": "../docker/compose.yaml",
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [6080, 5173, 1420],
+  "portsAttributes": {
+    "6080": { "label": "Desktop (noVNC)" }
+  },
+  "postCreateCommand": "npm ci",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "tauri-apps.tauri-vscode",
+        "rust-lang.rust-analyzer",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ]
+    }
+  }
+}

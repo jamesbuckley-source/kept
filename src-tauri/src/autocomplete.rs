@@ -177,6 +177,7 @@ fn run_hook(sender: Sender<u32>) {
 }
 
 /// Answers with the channel the hook signals, starting the worker the first time.
+#[cfg(windows)]
 fn trigger_sender(app: &AppHandle) -> &'static Sender<()> {
     TRIGGER.get_or_init(|| {
         let (sender, receiver) = mpsc::channel::<()>();

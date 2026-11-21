@@ -1224,12 +1224,20 @@ fn paste_literal_line(app: &AppHandle, state: &AppState, text: &str) -> Result<(
 }
 
 /// Handles of every window this app has open, so a paste never targets one.
+#[cfg(windows)]
 fn own_windows(app: &AppHandle) -> Vec<isize> {
     app.webview_windows()
         .values()
         .filter_map(|window| window.hwnd().ok())
         .map(|handle| handle.0 as isize)
         .collect()
+}
+
+/// X11 paste resolves its target by focus rather than by window handle, so there
+/// are no handles to exclude here.
+#[cfg(not(windows))]
+fn own_windows(_app: &AppHandle) -> Vec<isize> {
+    Vec::new()
 }
 
 /// Tells the window that a scheduled paste did not land.

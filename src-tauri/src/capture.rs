@@ -3268,6 +3268,7 @@ mod tests {
         Rect::new(0, 0, 1920, 1080)
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_primary_monitor_is_measured_from_the_desktop_origin() {
         let primary = primary_bounds();
@@ -3321,6 +3322,7 @@ mod tests {
         assert_eq!(rect, Rect::new(1800, 1000, 1920, 1080));
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_end_of_a_page_is_noticed_quickly() {
         // Reaching the end costs the three ways of scrolling in turn: the wheel, its
@@ -3693,6 +3695,7 @@ mod tests {
 
     /// Every overlay paints from one colour, so a literal cannot survive in a
     /// corner of the drawing code and ignore the setting.
+    #[cfg(windows)]
     #[test]
     fn the_outline_helper_maps_the_stored_hex_and_falls_back_safely() {
         assert_eq!(crate::settings::normalize_hex("#0078d7").as_deref(), Some("#0078d7"));

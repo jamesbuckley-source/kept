@@ -1,0 +1,10 @@
+# Keep the build context small: the repo has release builds and demo videos in
+# it that the image never needs.
+.git
+node_modules
+src-tauri/target
+dist
+docs/demos/*.mp4
+docs/screenshots
+docker/*.md
+*.log

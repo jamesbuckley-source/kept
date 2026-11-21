@@ -554,6 +554,7 @@ pub fn write(content: &ClipContent) -> Result<String> {
 }
 
 /// Writes `content` and, for text, the rich flavours captured with it.
+#[cfg(windows)]
 pub fn write_flavoured(
     content: &ClipContent,
     html: Option<&str>,
@@ -605,6 +606,42 @@ pub fn write_flavoured(
 /// Image-aware targets (chat apps, editors) paste the animated GIF or video from
 /// the file drop, while plain-text targets get the link. Kept separate from
 /// [`write_flavoured`] because it publishes two formats in one clipboard session.
+/// X11 has no clipboard session to hold open and arboard carries no rich
+/// flavours, so this writes what the port supports: text, an image, or a file
+/// list as its paths.
+#[cfg(not(windows))]
+pub fn write_flavoured(
+    content: &ClipContent,
+    html: Option<&str>,
+    rtf: Option<&str>,
+) -> Result<String> {
+    let _ = (html, rtf);
+    let mut clip = arboard::Clipboard::new()
+        .map_err(|e| AppError::Clipboard(format!("could not open the clipboard: {e}")))?;
+    match content {
+        ClipContent::Text(text) => clip
+            .set_text(text.clone())
+            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+        ClipContent::Image {
+            width,
+            height,
+            rgba,
+        } => clip
+            .set_image(arboard::ImageData {
+                width: *width as usize,
+                height: *height as usize,
+                bytes: std::borrow::Cow::Borrowed(rgba.as_slice()),
+            })
+            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+        // arboard cannot publish an X11 file list yet; the paths go as text
+        // until the paste side of the port writes `text/uri-list`.
+        ClipContent::Files(paths) => clip
+            .set_text(paths.join("\n"))
+            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+    }
+    Ok(hashing::of_content(content))
+}
+
 #[cfg(windows)]
 pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
     let paths = vec![path.to_string_lossy().into_owned()];
