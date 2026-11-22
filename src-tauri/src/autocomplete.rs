@@ -97,10 +97,22 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
 }
 
 #[cfg(not(windows))]
-pub fn apply(_app: &AppHandle, _settings: &Settings) {
-    // Nothing to install: the trigger is a Win32 keyboard hook, and the other
-    // platforms have no equivalent that this app has taken on yet.
-    invalidate_foreground();
+pub fn apply(app: &AppHandle, settings: &Settings) {
+    {
+        let mut config = lock(&CONFIG);
+        *config = Config {
+            token: settings.quick_paste_token.chars().collect(),
+            denied: settings.quick_paste_denied_apps.clone(),
+        };
+    }
+    if settings.quick_paste_enabled {
+        ensure_started(app);
+        ENABLED.store(true, Ordering::SeqCst);
+    } else {
+        // Off means the recording context is gone, not a context that ignores keys.
+        ENABLED.store(false, Ordering::SeqCst);
+        stop();
+    }
 }
 
 /// Stops the hook; used on the way out of the process.
@@ -116,6 +128,23 @@ pub fn stop() {
             }
         }
     }
+    #[cfg(not(windows))]
+    {
+        let hook = lock(&HOOK).take();
+        if let Some(hook) = hook {
+            // The context is a server-side object, so a second connection can end
+            // the loop the observing thread is sitting in.
+            match x11rb::connect(None) {
+                Ok((conn, _)) => {
+                    use x11rb::protocol::record::ConnectionExt as _;
+                    use x11rb::wrapper::ConnectionExt as _;
+                    let _ = conn.record_disable_context(hook.context);
+                    let _ = conn.sync();
+                }
+                Err(e) => log::warn!("could not ask the X server to stop recording keys: {e}"),
+            }
+        }
+    }
 }
 
 /// The hook's own state: the thread whose message loop has to be ended.
@@ -125,7 +154,13 @@ struct Hook {
     thread: u32,
 }
 
-#[cfg(windows)]
+/// The recording context the observer is iterating.
+#[cfg(not(windows))]
+#[derive(Debug, Clone, Copy)]
+struct Hook {
+    context: u32,
+}
+
 static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
 
 /// Starts the hook thread unless it is already running.
@@ -219,6 +254,311 @@ fn trigger(app: &AppHandle) {
     }
     std::thread::sleep(BACKSPACE_SETTLE);
     window::show_quick(app, origin);
+}
+
+#[cfg(not(windows))]
+fn ensure_started(app: &AppHandle) {
+    trigger_sender(app);
+    if lock(&HOOK).is_some() {
+        return;
+    }
+    let (sender, receiver) = mpsc::channel::<u32>();
+    let spawned = std::thread::Builder::new()
+        .name("quick-hook".into())
+        .spawn(move || observe(sender));
+    if let Err(e) = spawned {
+        log::warn!("could not start the quick-popup key observer: {e}");
+        return;
+    }
+    // Zero means the observer could not be installed; the thread reports back so
+    // the failure is logged once here rather than on every keystroke.
+    match receiver.recv_timeout(Duration::from_secs(2)) {
+        Ok(context) if context != 0 => *lock(&HOOK) = Some(Hook { context }),
+        Ok(_) => log::warn!("the X server refused a recording context for the quick popup"),
+        Err(e) => log::warn!("the quick-popup key observer did not start: {e}"),
+    }
+}
+
+/// Watches every key the X server delivers, until the recording context is
+/// disabled.
+///
+/// RECORD needs two connections: one owns the context, and the other reads the
+/// event stream. Nothing is grabbed, so typing is never held up and a keystroke
+/// cannot be lost while the popup decides what to do with it.
+#[cfg(not(windows))]
+fn observe(sender: Sender<u32>) {
+    use x11rb::connection::{Connection, RequestConnection};
+    use x11rb::protocol::record::{self, ConnectionExt as _};
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::x11_utils::TryParse;
+
+    let fail = |message: &str| {
+        log::warn!("{message}");
+        let _ = sender.send(0);
+    };
+    let (control, _) = match x11rb::connect(None) {
+        Ok(pair) => pair,
+        Err(e) => return fail(&format!("could not open the X connection for the quick popup: {e}")),
+    };
+    let (stream, _) = match x11rb::connect(None) {
+        Ok(pair) => pair,
+        Err(e) => return fail(&format!("could not open the second X connection: {e}")),
+    };
+    match control.extension_information(record::X11_EXTENSION_NAME) {
+        Ok(Some(_)) => {}
+        Ok(None) => return fail("the X server has no RECORD extension; :: quick paste needs it"),
+        Err(e) => return fail(&format!("could not query the RECORD extension: {e}")),
+    }
+
+    // The keyboard map answers what each keycap produces, which is what a keycode
+    // alone cannot say.
+    let map = match control
+        .get_keyboard_mapping(8, 248)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.reply().map_err(|e| e.to_string()))
+    {
+        Ok(map) => map,
+        Err(e) => return fail(&format!("could not read the keyboard map: {e}")),
+    };
+    let keysyms = Keymap::new(8, map.keysyms_per_keycode, map.keysyms);
+
+    let context = match control.generate_id() {
+        Ok(id) => id,
+        Err(e) => return fail(&format!("could not allocate a recording context: {e}")),
+    };
+    let empty = record::Range8 { first: 0, last: 0 };
+    let empty_ext = record::ExtRange {
+        major: empty,
+        minor: record::Range16 { first: 0, last: 0 },
+    };
+    let range = record::Range {
+        core_requests: empty,
+        core_replies: empty,
+        ext_requests: empty_ext,
+        ext_replies: empty_ext,
+        delivered_events: empty,
+        device_events: record::Range8 {
+            first: x11rb::protocol::xproto::KEY_PRESS_EVENT,
+            last: x11rb::protocol::xproto::KEY_RELEASE_EVENT,
+        },
+        errors: empty,
+        client_started: false,
+        client_died: false,
+    };
+    let created = control
+        .record_create_context(context, 0, &[record::CS::ALL_CLIENTS.into()], &[range])
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    if let Err(e) = created {
+        return fail(&format!("could not record keys: {e}"));
+    }
+    // Handed back before the stream is read, because reading it never returns.
+    let _ = sender.send(context);
+
+    let replies = match stream.record_enable_context(context) {
+        Ok(replies) => replies,
+        Err(e) => {
+            log::warn!("could not start reading recorded keys: {e}");
+            return;
+        }
+    };
+    for reply in replies {
+        let Ok(reply) = reply else { break };
+        // Category zero is the event stream itself; anything else is the server
+        // talking about the recording rather than through it.
+        if reply.category != 0 {
+            continue;
+        }
+        let mut remaining = &reply.data[..];
+        while !remaining.is_empty() {
+            match remaining[0] {
+                x11rb::protocol::xproto::KEY_PRESS_EVENT => {
+                    let Ok((event, rest)) = x11rb::protocol::xproto::KeyPressEvent::try_parse(remaining)
+                    else {
+                        break;
+                    };
+                    if ENABLED.load(Ordering::Relaxed) {
+                        if let Some(typed) = keysyms.character(event.detail, event.state.into()) {
+                            observe_character(typed);
+                        }
+                    }
+                    remaining = rest;
+                }
+                x11rb::protocol::xproto::KEY_RELEASE_EVENT => {
+                    let Ok((_event, rest)) =
+                        x11rb::protocol::xproto::KeyReleaseEvent::try_parse(remaining)
+                    else {
+                        break;
+                    };
+                    remaining = rest;
+                }
+                // The ranges asked for key events only, so anything else means the
+                // stream is not laid out the way this loop assumes.
+                other => {
+                    log::debug!("unexpected recorded event {other}; ending the observer");
+                    return;
+                }
+            }
+        }
+    }
+    log::info!("the quick-popup key observer stopped");
+}
+
+/// The keyboard map, so a keycode plus the modifiers held can name a character.
+#[cfg(not(windows))]
+struct Keymap {
+    first_keycode: u8,
+    per_keycode: usize,
+    keysyms: Vec<u32>,
+}
+
+#[cfg(not(windows))]
+impl Keymap {
+    fn new(first_keycode: u8, per_keycode: u8, keysyms: Vec<u32>) -> Self {
+        Self {
+            first_keycode,
+            per_keycode: per_keycode.max(1) as usize,
+            keysyms,
+        }
+    }
+
+    /// `state` is the modifier mask the event carried; shift picks the second
+    /// column, which is what makes Shift+`;` a colon on a US layout. The other
+    /// modifiers are left to the layout: this only has to notice a punctuation
+    /// token, not reimplement a keyboard.
+    fn character(&self, keycode: u8, state: u16) -> Option<char> {
+        let shifted = state & 0x1 != 0;
+        let index = (keycode as usize).checked_sub(self.first_keycode as usize)?;
+        let column = index * self.per_keycode + usize::from(shifted);
+        let keysym = *self.keysyms.get(column)?;
+        char_of(keysym)
+    }
+}
+
+/// The character a keysym stands for, in the two forms a token can be made of.
+#[cfg(not(windows))]
+fn char_of(keysym: u32) -> Option<char> {
+    // Latin-1 is its own keysym range.
+    if (0x20..=0x7e).contains(&keysym) {
+        return char::from_u32(keysym);
+    }
+    // Everything else arrives as the Unicode keysym form: 0x01000000 | codepoint.
+    if keysym & 0xff00_0000 == 0x0100_0000 {
+        return char::from_u32(keysym & 0x00ff_ffff);
+    }
+    None
+}
+
+/// Checks one typed character against the token, exactly as the Windows hook does.
+#[cfg(not(windows))]
+fn observe_character(typed: char) {
+    if !target_allows_trigger() {
+        return;
+    }
+    let fired = {
+        let config = lock(&CONFIG);
+        let mut strokes = lock(&STROKES);
+        record(&mut strokes, &config.token, typed, Instant::now())
+    };
+    if fired {
+        lock(&STROKES).chars.clear();
+        if let Some(sender) = TRIGGER.get() {
+            // Never blocks: the worker does the work, this thread must stay free.
+            let _ = sender.send(());
+        }
+    }
+}
+
+/// Whether the token typed into the focused window should open the popup.
+#[cfg(not(windows))]
+fn target_allows_trigger() -> bool {
+    // Our own windows — the popup, the history overlay, the settings page — must
+    // never open a second popup.
+    let Some(pid) = foreground_pid() else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return false;
+    }
+    let Ok(config) = CONFIG.try_lock() else {
+        return false;
+    };
+    match std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+        Ok(name) => {
+            let name = name.trim();
+            !config
+                .denied
+                .iter()
+                .any(|denied| denied.eq_ignore_ascii_case(name))
+        }
+        // A process this one cannot name is not one a paste could be tested
+        // against, so the token is left where it was typed.
+        Err(_) => false,
+    }
+}
+
+/// The process that owns the X input focus.
+#[cfg(not(windows))]
+fn foreground_pid() -> Option<u32> {
+    let report = paste::xdotool(&["getactivewindow", "getwindowpid"]).ok()?;
+    report.split_whitespace().last()?.parse().ok()
+}
+
+/// Everything that has to happen between noticing the token and showing the popup,
+/// the X11 way: there is no caret to ask for, so the popup hangs off the pointer.
+#[cfg(not(windows))]
+fn trigger(app: &AppHandle) {
+    if window::quick_is_open(app) {
+        return;
+    }
+    // Remember the window to paste back into while it still has the focus: the
+    // popup is about to take it.
+    paste::capture_foreground(None);
+    let origin = pointer_point();
+    let length = lock(&CONFIG).token.len();
+
+    // The typed characters have to be in the document before the backspaces remove
+    // them, or the backspaces eat whatever came before them instead.
+    std::thread::sleep(TOKEN_SETTLE);
+    if let Err(e) = paste::send_backspaces(length) {
+        log::warn!("could not remove the `::` from the document: {e}");
+    }
+    std::thread::sleep(BACKSPACE_SETTLE);
+    window::show_quick(app, origin);
+}
+
+#[cfg(not(windows))]
+fn pointer_point() -> Option<(i32, i32)> {
+    let report = paste::xdotool(&["getmouselocation", "--shell"]).ok()?;
+    let value = |key: &str| {
+        report.lines().find_map(|line| {
+            let value = line.trim().strip_prefix(key)?.strip_prefix('=')?;
+            value.trim().parse().ok()
+        })
+    };
+    Some((value("X")?, value("Y")?))
+}
+
+/// Answers with the channel the hook signals, starting the worker the first time.
+#[cfg(not(windows))]
+fn trigger_sender(app: &AppHandle) -> &'static Sender<()> {
+    TRIGGER.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<()>();
+        let app = app.clone();
+        let spawned = std::thread::Builder::new()
+            .name("quick-popup".into())
+            .spawn(move || {
+                // One trigger at a time: a fast typist pressing `::` twice must not
+                // queue two popups.
+                while receiver.recv().is_ok() {
+                    trigger(&app);
+                }
+            });
+        if let Err(e) = spawned {
+            log::warn!("could not start the quick-popup worker: {e}");
+        }
+        sender
+    })
 }
 
 /// True when the character completes the token.
@@ -407,9 +747,6 @@ fn invalidate_foreground() {
     }
 }
 
-#[cfg(not(windows))]
-fn invalidate_foreground() {}
-
 /// Screen point of the text caret in the focused application, when it can be found.
 ///
 /// The caret rectangle is only askable of the thread that owns it, and that thread
@@ -459,7 +796,6 @@ fn caret_point() -> Option<(i32, i32)> {
     }
 }
 
-#[cfg(windows)]
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -550,5 +886,36 @@ mod tests {
     fn an_empty_token_never_fires() {
         let mut strokes = Strokes::default();
         assert!(!record(&mut strokes, &[], ':', Instant::now()));
+    }
+
+    /// X11 reports a keycode and the modifiers held, so the character has to be
+    /// looked up in the keyboard map: colon is the shifted column of `;`.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_keycode_and_its_modifiers_name_the_character_typed() {
+        // Two keycodes, seven columns each: `a` and `;`/`:`.
+        let mut keysyms = vec![0u32; 14];
+        keysyms[0] = 0x61; // a
+        keysyms[7] = 0x3b; // ;
+        keysyms[8] = 0x3a; // :
+        let map = Keymap::new(8, 7, keysyms);
+
+        assert_eq!(map.character(8, 0), Some('a'));
+        assert_eq!(map.character(9, 0), Some(';'));
+        assert_eq!(map.character(9, 1), Some(':'), "shift picks the second column");
+        assert_eq!(map.character(7, 0), None, "below the first keycode");
+        assert_eq!(map.character(200, 0), None, "past the end of the map");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_keysym_becomes_the_character_it_stands_for() {
+        assert_eq!(char_of(0x3a), Some(':'));
+        assert_eq!(char_of(0x7e), Some('~'));
+        // Unicode keysyms carry the codepoint in the low three bytes.
+        assert_eq!(char_of(0x0100_00e9), Some('é'));
+        // A modifier-only keysym has no character.
+        assert_eq!(char_of(0xffe1), None);
+        assert_eq!(char_of(0), None);
     }
 }
