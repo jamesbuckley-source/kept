@@ -91,6 +91,7 @@ Implemented for X11:
 | --- | --- |
 | Clipboard writes | one `arboard` context lives for the whole process, because an X11 selection dies with the connection that set it; file lists go out as `text/uri-list` through `xclip`, and the watcher reads that target back |
 | Clipboard auto-clear | the same owner clears by publishing an empty selection, which is the X11 equivalent of an empty clipboard |
+| Animated GIFs and videos behind a copy | a browser's "Copy image" puts only the frame on screen on the clipboard, so the `text/html` target is read with `xclip` and the asset it names is fetched and kept beside the frame; copying that clip publishes the file as `text/uri-list`, so pasting keeps every frame |
 | Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
 | Region capture | `maim --select`, whose own X11 overlay is the drag surface |
 | Window capture | `xdotool selectwindow` picks the window, `maim --window <id>` grabs it |

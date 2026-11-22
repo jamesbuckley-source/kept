@@ -260,7 +260,7 @@ fn capture_once(
     // so the moving version can be fetched while the still frame already serves
     // the list. A pasted address takes the same route.
     let motion_source = match kind {
-        ClipKind::Image => read_rich_text().0.as_deref().and_then(animated::find),
+        ClipKind::Image => motion_html().as_deref().and_then(animated::find),
         ClipKind::Text => match &content {
             ClipContent::Text(text) => animated::from_url(text),
             _ => None,
@@ -541,6 +541,34 @@ fn read_content(settings: &Settings) -> Option<ClipContent> {
     }
 
     None
+}
+
+/// The HTML a copy carries, which is where an animated image's address hides.
+///
+/// "Copy image" in a browser publishes only the frame on screen plus an `<img>`
+/// tag naming the asset it came from, so the moving version is findable only
+/// through that HTML.
+#[cfg(windows)]
+fn motion_html() -> Option<String> {
+    read_rich_text().0
+}
+
+/// The same half of the copy taken with `xclip`.
+///
+/// `arboard` carries no HTML, and X11 spells the target `text/html` rather than
+/// the registered `HTML Format`, so it is read through the tool that already
+/// publishes file lists.
+#[cfg(not(windows))]
+fn motion_html() -> Option<String> {
+    let output = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", "text/html", "-o"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let html = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!html.is_empty()).then_some(html)
 }
 
 // ---------------------------------------------------------------------------
@@ -1500,6 +1528,11 @@ fn foreground_process_name() -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The X11 clipboard has one owner at a time, so the two tests that publish to
+    /// it take turns instead of clobbering each other's selection.
+    #[cfg(not(windows))]
+    static X11_CLIPBOARD: Mutex<()> = Mutex::new(());
+
     #[cfg(windows)]
     #[test]
     fn a_dib_is_bottom_up_and_channel_swapped() {        // 2×2: the top row is red then green, the bottom row blue then white.
@@ -1726,6 +1759,7 @@ mod tests {
     #[test]
     #[ignore = "writes to the live X clipboard; run with DISPLAY set"]
     fn a_file_list_round_trips_through_the_x11_clipboard() {
+        let _clipboard = X11_CLIPBOARD.lock();
         // `xclip` reads its data from a file descriptor and then stays resident to
         // serve the selection, so it is not waited on: only the data it published
         // is what this test is about.
@@ -1766,6 +1800,53 @@ mod tests {
                 "/tmp/kept two.txt".to_string(),
             ]),
             "the file list a copy publishes has to be the one the watcher reads"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    #[ignore = "writes to the live X clipboard; run with DISPLAY set"]
+    fn the_copied_images_html_round_trips_through_the_x11_clipboard() {
+        let _clipboard = X11_CLIPBOARD.lock();
+        // Exactly what Chromium publishes for "Copy image": the frame it shows,
+        // plus the tag naming the asset the frame came from.
+        let page = std::env::temp_dir().join("kept-motion-html.html");
+        let contents = r#"<img src="https://media.example.com/a.gif"/>"#;
+        if std::fs::write(&page, contents).is_err() {
+            return;
+        }
+        let Ok(handle) = std::fs::File::open(&page) else {
+            return;
+        };
+        let mut writer = match std::process::Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "text/html", "-i"])
+            .stdin(std::process::Stdio::from(handle))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            // No xclip on this machine, so there is nothing to test.
+            Err(_) => return,
+        };
+        let mut html = None;
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            if let Some(found) = motion_html() {
+                html = Some(found);
+                break;
+            }
+        }
+        let _ = writer.kill();
+        let _ = std::fs::remove_file(&page);
+
+        assert_eq!(
+            html.as_deref().and_then(animated::find),
+            Some(animated::MotionSource::Remote {
+                kind: animated::MotionKind::Gif,
+                url: "https://media.example.com/a.gif".to_string(),
+            }),
+            "the address of a copied GIF has to be recoverable from the clipboard"
         );
     }
 
