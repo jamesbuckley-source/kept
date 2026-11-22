@@ -718,7 +718,8 @@ fn open_record_bar<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         tauri::WebviewUrl::App("index.html?window=record-bar".into()),
     )
     .title("Record")
-    .inner_size(488.0, 140.0)
+    // Sized for the idle toolbar; the frontend resizes it to fit the rows it shows.
+    .inner_size(488.0, 100.0)
     .resizable(false)
     .decorations(false)
     .transparent(transparency_available())
@@ -825,6 +826,12 @@ pub fn close_record_bar<R: Runtime>(app: &AppHandle<R>) {
 /// Label of the countdown shown before a delayed screenshot is taken.
 pub const COUNTDOWN_LABEL: &str = "countdown";
 
+/// Title of the countdown window.
+///
+/// X11 has no other handle on a window Tauri built, so the title is also how the
+/// shaping below finds it — which is why it is a constant rather than a literal.
+const COUNTDOWN_TITLE: &str = "Screenshot delay";
+
 /// Shows the countdown for a delayed screenshot, in the bottom right corner of the
 /// primary monitor.
 ///
@@ -854,7 +861,7 @@ fn open_countdown<R: Runtime>(app: &AppHandle<R>, seconds: u32) -> tauri::Result
         COUNTDOWN_LABEL,
         tauri::WebviewUrl::App(format!("index.html?window=countdown&seconds={seconds}").into()),
     )
-    .title("Screenshot delay")
+    .title(COUNTDOWN_TITLE)
     .inner_size(side, side)
     .resizable(false)
     .decorations(false)
@@ -884,7 +891,155 @@ fn open_countdown<R: Runtime>(app: &AppHandle<R>, seconds: u32) -> tauri::Result
         let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     }
     let _ = window.show();
+    // The countdown is a ring drawn in a square window. With a compositor the
+    // corners outside it are transparent; on a bare X session there is nothing to
+    // blend them, and the whole square shows. Cutting the window itself down to the
+    // ring leaves the desktop visible in the corners either way.
+    #[cfg(not(windows))]
+    if !transparency_available() {
+        round_window(COUNTDOWN_TITLE);
+    }
     Ok(())
+}
+
+/// Cuts a window down to the circle its page draws, so its corners are not part of
+/// it at all.
+///
+/// Only worth doing where transparency is unavailable: with a compositor the ARGB
+/// corners are already smooth, and a hard X11 shape would only take the
+/// antialiasing away.
+#[cfg(not(windows))]
+fn round_window(title: &str) {
+    match cut_to_circle(title) {
+        Ok(()) => log::debug!("rounded the {title} window off"),
+        // Only a cosmetic touch, so a server without SHAPE loses nothing else.
+        Err(e) => log::debug!("could not round the {title} window: {e}"),
+    }
+}
+
+/// The SHAPE work behind [`round_window`]: a one-bit mask holding a filled circle
+/// becomes the window's boundary.
+#[cfg(not(windows))]
+fn cut_to_circle(title: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::shape::{self, ConnectionExt as _};
+    use x11rb::protocol::xproto::{Arc, ConnectionExt as _, CreateGCAux};
+
+    // Tauri hands out no X11 id, so the window is found by the title it was given;
+    // the countdown is the only window with this one, and it was built just now.
+    let id = window_id_by_title(title)?;
+    let (conn, screen) = x11rb::connect(None)?;
+    let root = conn.setup().roots[screen].root;
+    let geometry = conn.get_geometry(id)?.reply()?;
+    let side = geometry.width.min(geometry.height);
+    if side == 0 {
+        return Ok(());
+    }
+
+    let mask = conn.generate_id()?;
+    conn.create_pixmap(1, mask, root, side, side)?;
+    let gc = conn.generate_id()?;
+    conn.create_gc(gc, mask, &CreateGCAux::new().foreground(1u32).background(0u32))?;
+    conn.poly_fill_arc(
+        mask,
+        gc,
+        &[Arc {
+            x: 0,
+            y: 0,
+            width: side,
+            height: side,
+            angle1: 0,
+            // A full turn is 360° in units of 1/64°.
+            angle2: 360 * 64,
+        }],
+    )?;
+    conn.shape_mask(shape::SO::SET, shape::SK::BOUNDING, id, 0, 0, mask)?;
+    conn.free_gc(gc)?;
+    conn.free_pixmap(mask)?;
+    conn.flush()?;
+    Ok(())
+}
+
+/// The X11 id of the window with exactly `title`, waiting for it to be created and
+/// mapped. Searched through the window tree so it does not depend on `xdotool` or on
+/// the window manager reparenting it under a frame.
+#[cfg(not(windows))]
+fn window_id_by_title(title: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    let (conn, screen) = x11rb::connect(None)?;
+    let root = conn.setup().roots[screen].root;
+    let net_wm_name = conn
+        .intern_atom(false, b"_NET_WM_NAME")?
+        .reply()?
+        .atom;
+    let utf8_string = conn.intern_atom(false, b"UTF8_STRING")?.reply()?.atom;
+
+    for _ in 0..80 {
+        if let Some(id) = find_window_by_title(&conn, root, title, net_wm_name, utf8_string)? {
+            return Ok(id);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(format!("no window titled {title}").into())
+}
+
+/// Walks the window tree from `window` and returns the id of a window whose name is
+/// exactly `title`.
+#[cfg(not(windows))]
+fn find_window_by_title(
+    conn: &impl x11rb::connection::Connection,
+    window: u32,
+    title: &str,
+    net_wm_name: u32,
+    utf8_string: u32,
+) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    if window_name_matches(conn, window, title, net_wm_name, utf8_string)? {
+        return Ok(Some(window));
+    }
+    let tree = match conn.query_tree(window) {
+        Ok(cookie) => match cookie.reply() {
+            Ok(tree) => tree,
+            Err(_) => return Ok(None),
+        },
+        Err(_) => return Ok(None),
+    };
+    for child in tree.children {
+        if let Some(id) = find_window_by_title(conn, child, title, net_wm_name, utf8_string)? {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// True when the X11 window's name is exactly `title`.
+#[cfg(not(windows))]
+fn window_name_matches(
+    conn: &impl x11rb::connection::Connection,
+    window: u32,
+    title: &str,
+    net_wm_name: u32,
+    utf8_string: u32,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+
+    // Prefer _NET_WM_NAME (UTF-8); fall back to WM_NAME.
+    let name = conn
+        .get_property(false, window, net_wm_name, utf8_string, 0, 128)?
+        .reply()?;
+    if name.format == 8 && !name.value.is_empty() {
+        return Ok(String::from_utf8_lossy(&name.value).trim_end_matches('\0') == title);
+    }
+    let name = conn
+        .get_property(false, window, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 128)?
+        .reply()?;
+    if name.format == 8 && !name.value.is_empty() {
+        return Ok(String::from_utf8_lossy(&name.value).trim_end_matches('\0') == title);
+    }
+    Ok(false)
 }
 
 /// Takes the countdown down, whether it ran out or was cancelled.

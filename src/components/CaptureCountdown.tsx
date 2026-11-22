@@ -31,12 +31,19 @@ export function CaptureCountdown() {
   // without this the corners outside the circle would be a square of colour.
   useEffect(() => {
     const { body, documentElement } = document;
-    const previous = [body.style.background, documentElement.style.background];
+    const root = document.getElementById("root");
+    const previous = [
+      body.style.background,
+      documentElement.style.background,
+      root?.style.background ?? "",
+    ];
     body.style.background = "transparent";
     documentElement.style.background = "transparent";
+    if (root) root.style.background = "transparent";
     return () => {
       body.style.background = previous[0];
       documentElement.style.background = previous[1];
+      if (root) root.style.background = previous[2];
     };
   }, []);
 

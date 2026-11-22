@@ -22,6 +22,7 @@ use crate::window;
 
 pub const TRAY_ID: &str = "kept-tray";
 
+const ID_OPEN_KEPT: &str = "open-kept";
 const ID_NEW_CLIP: &str = "new-clip";
 const ID_CAPTURE_REGION: &str = "capture-region";
 const ID_CAPTURE_WINDOW: &str = "capture-window";
@@ -100,6 +101,7 @@ pub fn refresh(app: &AppHandle) {
 }
 
 fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
+    let open_kept = MenuItem::with_id(app, ID_OPEN_KEPT, "Open Kept", true, None::<&str>)?;
     let new_clip = MenuItem::with_id(app, ID_NEW_CLIP, "New clip…", true, None::<&str>)?;
     let color = MenuItem::with_id(app, ID_CAPTURE_COLOR, "Color Picker", true, None::<&str>)?;
     let ruler = MenuItem::with_id(app, ID_CAPTURE_RULER, "Onscreen ruler", true, None::<&str>)?;
@@ -159,7 +161,7 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let separator_bottom = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, ID_QUIT, "Quit", true, None::<&str>)?;
 
-    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&new_clip, &color, &ruler, &capture];
+    let mut items: Vec<&dyn IsMenuItem<tauri::Wry>> = vec![&open_kept, &new_clip, &color, &ruler, &capture];
     if let Some(pause) = &pause {
         items.push(pause);
     }
@@ -180,6 +182,10 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
 
 fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
     match event.id.as_ref() {
+        ID_OPEN_KEPT => {
+            crate::paste::capture_foreground(window::own_window_handle(app));
+            window::show(app);
+        }
         ID_NEW_CLIP => window::show_add_clip(app),
         ID_CAPTURE_REGION => crate::commands::run_capture_shortcut(app, CaptureAction::Region),
         ID_CAPTURE_WINDOW => crate::commands::run_capture_shortcut(app, CaptureAction::Window),

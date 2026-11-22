@@ -79,11 +79,12 @@ docker compose -f docker/compose.yaml down -v
 
 ## Where the Linux port stands
 
-`cargo check --all-targets` is green, `cargo test --lib` is **458 passing, 0
-failing** on Linux (475 on Windows), and the packaged app opens on the container
-desktop — setup wizard, SQLite migrations, global shortcuts and the tray all come
-up. Every feature in the table below was exercised through the app's own interface
-inside the container.
+Linux support is **Beta**. `cargo check --all-targets` is green, `cargo test --lib`
+is **458 passing, 0 failing** on Linux (475 on Windows), and the packaged app opens
+on the container desktop — setup wizard, SQLite migrations, global shortcuts and the
+tray all come up. The release workflow now builds Linux packages (AppImage, `.deb`,
+`.rpm`) for end users alongside the Windows installer. Most functionality should work
+on Linux (X11); the **onscreen ruler does not yet work on Linux**.
 
 Implemented for X11:
 
@@ -106,13 +107,13 @@ Implemented for X11:
 | OCR | `tesseract --psm 6` on a temporary PNG |
 | Overlay windows | opaque when no compositor is running, which is what the container's bare X session is |
 | Cloud folders | Dropbox roots from `~/.dropbox/info.json`, plus the `My Drive` / `Google Drive` folder names |
+| Countdown / floating UI (no compositor) | the screenshot countdown window is clipped to its ring via X11 SHAPE on bare X sessions, and the screen recorder bar opens at a compact initial size so it does not show excess bottom padding while settling |
 
-Still Windows-only, and next in the port:
+Still limited or not yet available on Linux (Beta):
 
+- **Onscreen ruler** does not yet work on Linux (`ruler.rs` is a Win32 overlay; only its measurement maths is portable).
 - the recorder's region and window placement (`choose_region` / `choose_window`),
   which share the Win32 drag surface
-- the onscreen ruler (`ruler.rs` is a Win32 overlay; only its measurement maths is
-  portable)
 - Print Screen as a global key: the option registers a `PrintScreen` shortcut, and
   on this X server the grab is refused as already held. Captures stay reachable
   from any capture shortcut set in Settings → Capture
@@ -126,7 +127,7 @@ Still Windows-only, and next in the port:
   recording is encoded with; the image installs both, and without them a recording
   plays as a black rectangle.
 - No compositor: transparent windows cannot be blended, so the recording bar, the
-  countdown and the record frame are drawn opaque instead.
+  countdown and the record frame are drawn opaque/clipped instead of smoothly blended.
 - The clipboard is the container's own X clipboard. Kept inside the container
   cannot see Windows' clipboard.
 - A scrolled capture costs about a second per step on llvmpipe, so a long page

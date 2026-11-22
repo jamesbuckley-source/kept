@@ -7,11 +7,13 @@
 
 # Kept
 
-A clipboard history manager for Windows: Tauri 2 + React 19 + TypeScript + Tailwind CSS 4.
+A clipboard history manager for Windows and Linux (**Beta**), built with Tauri 2 + React 19 + TypeScript + Tailwind CSS 4.
 
 Everything stays on your machine. Clip contents are stored locally in SQLite; the only requests the
 app makes are for a copied picture's own source file, a link's preview picture, GIPHY (with your key),
 and its own update check — each described in [Security model](#security-model).
+
+> **Linux support is Beta.** Most functionality should work on Linux (X11). The **onscreen ruler does not yet work on Linux**; other features are available subject to the platform notes below.
 
 <p align="center">
   <a href="https://github.com/jamesbuckley-source/kept/releases/latest/download/Kept_x64-setup.exe">
@@ -19,17 +21,30 @@ and its own update check — each described in [Security model](#security-model)
   </a>
 </p>
 
-<p align="center"><sub>Per-user NSIS installer · no admin prompt · Windows 10 and 11</sub></p>
+<p align="center"><sub>Windows: per-user NSIS installer · no admin prompt · Windows 10 and 11</sub></p>
 
 ## Download
+
+### Windows
 
 **[Download Kept for Windows](https://github.com/jamesbuckley-source/kept/releases/latest/download/Kept_x64-setup.exe)**
 — a per-user NSIS installer, no elevation prompt, around 10 MB.
 
-All versions, notes and artefacts are on the
-[releases page](https://github.com/jamesbuckley-source/kept/releases/latest). Installed copies
-update themselves: *Settings → About* checks GitHub once a day and installs signed releases in
+Installed copies update themselves: *Settings → About* checks GitHub once a day and installs signed releases in
 place.
+
+### Linux (Beta)
+
+Linux packages are published on the [releases page](https://github.com/jamesbuckley-source/kept/releases/latest) for tagged releases:
+
+- **AppImage** (`.AppImage`) — portable; mark executable and run (`chmod +x Kept*.AppImage && ./Kept*.AppImage`).
+- **Debian/Ubuntu** (`.deb`) — install with `sudo apt install ./Kept_*_amd64.deb` (or your distro’s package tool).
+- **Fedora/RHEL/openSUSE** (`.rpm`) — install with `sudo dnf install ./Kept-*.rpm` (or `rpm -i`).
+
+Linux builds target X11-based desktops and may require standard Tauri/WebKitGTK runtime libraries provided by your distribution. See [docker/README.md](docker/README.md) for development environment details, known limitations, and X11 notes (including no-compositor behavior). **Onscreen ruler is not yet available on Linux.**
+
+All versions, notes and artefacts (Windows and Linux) are on the
+[releases page](https://github.com/jamesbuckley-source/kept/releases/latest). Auto-update behavior is currently focused on Windows signed releases.
 
 ## Screenshots
 
@@ -95,7 +110,7 @@ theme and the image editor. It can be re-run from Settings at any time.*
 - **Two layouts** — rows for reading text, cards for browsing images — with a draggable card-size
   slider and a separate interface scale.
 - **Themes** with dark and light presets, or a custom palette picked color by color.
-- **Reads text out of screenshots** with the Windows OCR engine and makes it searchable; a hover
+- **Reads text out of screenshots** with OCR and makes it searchable (Windows OCR on Windows, Tesseract on Linux Beta); a hover
   button copies that text instead of the image.
 - **Orders the history** by last use or capture date, in either direction, and remembers a
   list-or-cards layout per category.
@@ -125,45 +140,60 @@ theme and the image editor. It can be re-run from Settings at any time.*
 - **Annotates** clips with a searchable note, and edits a text clip in place from the preview pane.
 - **Samples colors** from anywhere on screen with the eyedropper in the title bar; a magnifier
   beside the crosshair previews the pixel and its hex/RGB values before you click.
-- **Takes screenshots** of a dragged region or of a whole window, straight into the history.
+- **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)).
 - **Measures the screen** with an onscreen ruler: drag distances and boxes, click angles, drop
-  guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. Its
-  icon-only toolbar names each tool on hover, the padlock locks it click-through so other apps stay
-  usable (Esc unlocks, Esc again closes), and its Copy button puts the readout on the clipboard and
-  in history in px, DIP or both.
+  guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. **The
+  onscreen ruler is not yet available on Linux (Beta).** On Windows, its icon-only toolbar names
+  each tool on hover, the padlock locks it click-through so other apps stay usable (Esc unlocks,
+  Esc again closes), and its Copy button puts the readout on the clipboard and in history in px,
+  DIP or both.
 
 ## Requirements
 
-| | |
-|---|---|
-| OS | Windows 10/11 |
-| Node | 20+ |
-| Rust | 1.85+ (`rustup`; the backend uses edition 2024) |
-| Build tools | MSVC C++ build tools + Windows SDK |
-| WebView2 | Preinstalled on Windows 11; a runtime download on older Windows 10 |
+| | Windows | Linux (Beta) |
+|---|---|---|
+| OS | Windows 10/11 | Linux with an X11 desktop/session (Wayland support may vary) |
+| Node | 20+ | 20+ |
+| Rust | 1.85+ (`rustup`; backend uses edition 2024) | 1.85+ (`rustup`; backend uses edition 2024) |
+| Build tools | MSVC C++ build tools + Windows SDK | Standard build tools (`build-essential`, `pkg-config`, etc.) plus Tauri/WebKitGTK dev packages |
+| Runtime UI stack | WebView2 (preinstalled on Windows 11; runtime download on older Windows 10) | WebKitGTK/GTK3 and distro-provided desktop libraries |
 
-The Rust backend compiles SQLite from source, so there is no external `sqlite3.dll` to install.
-Screen recording encodes with **FFmpeg**, which is the one thing the app asks for at run time: it is
-looked for on `PATH` and in the folder a winget install leaves it in, and **Settings → Screen
-Recording → Install FFmpeg** fetches it with winget for a machine that has neither. Everything else
-in the app works without it.
+The Rust backend compiles SQLite from source, so there is no external SQLite library to install.
+Screen recording encodes with **FFmpeg**, which is the one external runtime tool Kept may ask for:
+on Windows it is looked for on `PATH` and in the folder a winget install leaves it in, and
+**Settings → Screen Recording → Install FFmpeg** can fetch it with winget; on Linux install `ffmpeg`
+with your package manager (and GStreamer plugins for playback as noted in [docker/README.md](docker/README.md)).
+OCR is provided by Windows OCR on Windows and by `tesseract` on Linux. Everything else in the app works without FFmpeg.
 
 ## Getting started
 
-```powershell
+```bash
 npm install
 npm run tauri dev          # dev build with hot reload
-npm run tauri build        # optimised build + NSIS installer
+npm run tauri build        # optimised build + platform bundles/installers
 ```
+
+### Windows development notes
 
 Dev mode serves the UI on **port 5173** and HMR on 5174. (Tauri's scaffold default of 1420 falls
 inside a Windows reserved port range on machines with Hyper-V or WSL enabled, where it fails with
 `EACCES`.)
 
-The app starts hidden. Press **Alt+V** or click the tray icon to bring it up. The very first
-launch shows the window instead, so it does not look like nothing happened.
+### Linux development notes (Beta)
 
-## Building an installer
+On Linux you need a desktop session/display (X11) and the system dependencies required by Tauri/WebKitGTK,
+plus tools used by Linux capture/clipboard features as applicable (e.g. `ffmpeg`, `tesseract`, `xdotool`,
+`maim`, `xclip`) depending on the features you exercise. See [docker/README.md](docker/README.md) for a
+known-good container setup, X11/no-compositor notes, and current limitations. **The onscreen ruler is not
+yet available on Linux.**
+
+The app starts hidden. Press **Alt+V** (or your configured global shortcut) or use the tray icon/menu to
+bring it up. The very first launch shows the window instead, so it does not look like nothing happened. On
+Linux, global shortcuts and tray integration depend on the desktop environment and session type.
+
+## Building installers and packages
+
+### Windows (NSIS installer)
 
 `npm run installer` produces a per-user NSIS installer:
 
@@ -180,8 +210,8 @@ only useful for a build you never intend to distribute.
 
 Releases published from a `v*` tag also attach the same installer under a stable name,
 [`Kept_x64-setup.exe`](https://github.com/jamesbuckley-source/kept/releases/latest/download/Kept_x64-setup.exe),
-which is what the download link above uses. The tag build is signed with the updater key so
-installed copies can update in place.
+which is what the download link above uses. The Windows tag build is signed with the updater key so
+installed Windows copies can update in place.
 
 It installs to `%LOCALAPPDATA%\Kept` with no elevation prompt and registers an entry in
 *Apps & features* for uninstalling. NSIS is the open-source installer generator Tauri uses —
@@ -192,12 +222,30 @@ previous folder carried across on the first launch: the pointer that names a cus
 comes with it, along with the database and media if the history lived in the default location. The
 old `%APPDATA%\com.copypaste.app` folder is left in place, so a rollback still works.
 
+### Linux (Beta packages)
+
+To build Linux packages locally, install the required system dependencies for your distribution
+(Tauri/WebKitGTK/GTK3 dev packages, `patchelf`, etc.), then run:
+
+```bash
+npm install
+npm run tauri build -- --bundles deb appimage rpm
+```
+
+Artifacts are written under `src-tauri/target/release/bundle/` (for example `deb/*.deb`,
+`appimage/*.AppImage`, `rpm/*.rpm`) depending on host support. Tagged GitHub releases build and
+upload Linux packages automatically for end-user installation (see [Releases and automatic updates](#releases-and-automatic-updates)).
+Linux support is **Beta** and the **onscreen ruler is not yet available on Linux**. See
+[docker/README.md](docker/README.md) for Linux development and platform limitations.
+
 ## Tray and background behaviour
 
 Kept starts hidden and lives in the tray. Left-click the icon to toggle the window; right-click for
-the full menu — *New clip…*, *Color Picker*, *Onscreen ruler*, a **Capture** submenu, **Pause
-capture**, *Settings…*, *Data folder* and *Quit*. The menu follows the state: a pause reads *Resume
-capture (12 min left)*, and *Lock vault* appears only while the vault is open.
+the full menu — **Open Kept**, *New clip…*, *Color Picker*, *Onscreen ruler* (Windows only, not yet
+available on Linux), a **Capture** submenu, **Pause capture**, *Settings…*, *Data folder* and *Quit*.
+The menu follows the state: a pause reads *Resume capture (12 min left)*, and *Lock vault* appears
+only while the vault is open. On Linux (Beta), tray behavior and available integrations may vary by
+desktop environment.
 
 Closing the window hides it and the clipboard watcher keeps running; quitting is deliberate, from
 the tray menu only. The window is an ordinary window rather than an always-on-top overlay unless
@@ -469,9 +517,10 @@ listed under **Images (All)** as well, beside the screenshots. Files captured be
 their preview on the next start, in the same background pass as text recognition. Only files that
 decode with the bundled PNG/JPEG codecs get a picture; anything else keeps the file-list glyph.
 
-Images are also read with the Windows OCR engine in the background; the recognised text is
-indexed for search, shown under the preview, and copyable from a button on the card, where the
-copy lands in the history as its own text clip so it can be pinned, tagged or searched later.
+Images are also read with OCR in the background (Windows OCR on Windows, Tesseract on Linux Beta);
+the recognised text is indexed for search, shown under the preview, and copyable from a button on
+the card, where the copy lands in the history as its own text clip so it can be pinned, tagged or
+searched later.
 Images are additionally scanned for faces, also in the background — see [Facial recognition](#facial-recognition).
 
 Themes are stored as a palette of twelve color tokens. Rather than shipping two stylesheets, the
@@ -817,6 +866,8 @@ chrome only — the captured pixels never contain it. Every kind has an optional
 
 ## Onscreen ruler
 
+> **Linux (Beta):** the onscreen ruler is **not yet available on Linux**. The information below applies to Windows.
+
 The ruler opens from the title bar, the sidebar, the tray menu or its opt-in shortcut and covers the
 primary monitor. Select, distance, box and angle tools give pixel readouts; guides are dragged from
 the edge rulers; endpoints snap to windows, colour edges, guides or a grid (`Alt` bypasses snapping,
@@ -978,13 +1029,19 @@ password managers mark secret material, and the setting is on by default.
 
 ## Releases and automatic updates
 
-Pushing a `v*` tag runs [`.github/workflows/release.yml`](./.github/workflows/release.yml), which
-runs the backend tests, builds the NSIS installer, signs it, attaches a stable
-`Kept_x64-setup.exe` alias and publishes the release with `latest.json`. The app polls
-`https://github.com/jamesbuckley-source/kept/releases/latest/download/latest.json`, verifies
-the signature against the public key in `tauri.conf.json`, and installs in place.
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](./.github/workflows/release.yml), which:
 
-Two repository secrets drive the signing, and losing either breaks future updates:
+- runs backend tests and builds/signs the Windows NSIS installer, publishes the GitHub release and
+  `latest.json`, and attaches a stable `Kept_x64-setup.exe` alias; and
+- builds and uploads Linux (Beta) end-user packages (`.AppImage`, `.deb`, `.rpm`) to the same
+  release.
+
+Installed Windows copies poll
+`https://github.com/jamesbuckley-source/kept/releases/latest/download/latest.json`, verify the
+signature against the public key in `tauri.conf.json`, and install in place. Automatic in-app update
+delivery is currently focused on the Windows signed updater artifacts.
+
+Two repository secrets drive signing, and losing either breaks future signed Windows updater releases:
 
 | Secret | Purpose |
 |---|---|
@@ -994,7 +1051,8 @@ Two repository secrets drive the signing, and losing either breaks future update
 Keep a backup of the private key: a release signed with a different key is rejected by installed
 copies. The update check is on by default; *Settings → About* turns it off and offers a manual
 check. When a release is waiting, a *What's new* link sits next to *Check now*, and the first launch
-after an update offers the same link to the release notes.
+after an update offers the same link to the release notes. Linux users can install/update by downloading
+the latest packages from the releases page while Linux support is in Beta.
 
 ## Tests
 

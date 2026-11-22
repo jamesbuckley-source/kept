@@ -2,22 +2,30 @@
      GitHub release body and as the `notes` field of latest.json, which is what
      Kept's update window shows, so rewrite it before tagging. -->
 
-## The new mark
+## Linux support (Beta)
 
-The app icon, the tray, the title bar logo and the settings header all carry the Kept mark now, redrawn from the vector original so every bundle size stays sharp.
+Kept can now be built and packaged for Linux (X11) as a **Beta**. Tagged releases
+include Linux install artifacts (`.AppImage`, `.deb`, `.rpm`) alongside the Windows
+installer so end users can install Kept on Linux from the GitHub Releases page.
 
-## Saving follows the clip
+Most functionality should work on Linux. **The onscreen ruler does not yet work on
+Linux** (it remains Windows-only for now); other capture, clipboard, tray, and
+recording features are available subject to the usual X11/desktop-environment
+limitations documented in `docker/README.md`.
 
-- Links save as Windows shortcuts, colours as text or CSS, images as capture-<date>.png
-- A GIF or video clip saves the moving asset, with the still frame as the second choice
-- Secrets ask before they are written outside the vault, and sealed images are decrypted rather than copied as ciphertext
-- A file clip reports the originals that had gone instead of failing the whole export
-- Batch saves can sort into Images, Text and Files, and the last folder is remembered
+## Linux fixes
 
-## A window for updates
+- **Screenshot countdown edges:** on non-composited X11 sessions, the countdown window
+  is clipped to a circular shape (X11 SHAPE) more reliably so transparent corners do
+  not appear as square/opaque artifacts.
+- **Screen recorder bar sizing:** the floating recorder bar now opens at a compact
+  initial height on Linux to avoid excess empty padding at the bottom while its
+  content-driven resize settles.
+- **Tray menu:** added **“Open Kept”** as the top tray menu item to quickly show/focus
+  the main window.
 
-The launch check opens the release notes in a window of their own, with Update now, Skip this version and Remind me later. Settings > About also has "Show latest updates", which embeds the same page.
+## Packaging and docs
 
-## Cloud folders warn first
-
-Choosing a data folder inside Dropbox or Google Drive explains what a sync client does to a live database, and offers Cancel.
+- Release automation builds and uploads Linux packages for tagged releases.
+- Documentation updated to describe Linux Beta status, Linux installation options, and
+  current Linux limitations (including the ruler).
