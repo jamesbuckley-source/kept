@@ -1,0 +1,72 @@
+name: CI
+
+# The Mac build cannot be produced on the Windows dev machine, so every pull
+# request builds and bundles it on a GitHub-hosted runner. This proves the code
+# compiles, the tests pass and a launchable `.app` comes out of `tauri build`;
+# clipboard capture, tray, hotkeys and TCC permissions still need a real Mac.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    # `macos-latest` is an Apple Silicon runner. Intel Macs are built with
+    # `--target x86_64-apple-darwin` once a universal bundle is wanted.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run backend tests
+        working-directory: src-tauri
+        run: cargo test
+
+      # Updater artifacts are signed with a key only the release workflow holds,
+      # so the pull request build turns them off rather than leaving the bundles
+      # out. `beforeBuildCommand` still runs `tsc && vite build`.
+      - name: Build the app bundle
+        run: npm run tauri build -- --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Check the bundle
+        run: |
+          app="src-tauri/target/release/bundle/macos/Kept.app"
+          test -d "$app"
+          test -x "$app/Contents/MacOS/Kept"
+          plutil -lint "$app/Contents/Info.plist"
+          lipo -archs "$app/Contents/MacOS/Kept"
+          # Ad-hoc signing has to be enough until a Developer ID exists; print
+          # what the bundle got instead of failing when it is unsigned.
+          codesign -dv "$app" 2>&1 | head -n 5 || true
+
+      - name: Upload the app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kept-macos-app
+          path: src-tauri/target/release/bundle/macos/Kept.app
+          if-no-files-found: error
