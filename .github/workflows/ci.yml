@@ -23,11 +23,13 @@ jobs:
     # `macos-latest` is an Apple Silicon runner. Intel Macs are built with
     # `--target x86_64-apple-darwin` once a universal bundle is wanted.
     runs-on: macos-latest
+    # A cold release build takes ~20 minutes; anything far past that is stuck.
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -56,16 +58,21 @@ jobs:
       - name: Check the bundle
         run: |
           app="src-tauri/target/release/bundle/macos/Kept.app"
+          plist="$app/Contents/Info.plist"
           test -d "$app"
-          test -x "$app/Contents/MacOS/Kept"
-          plutil -lint "$app/Contents/Info.plist"
-          lipo -archs "$app/Contents/MacOS/Kept"
+          plutil -lint "$plist"
+          # The Mach-O is named by CFBundleExecutable, which is `kept` even
+          # though the bundle is `Kept.app`. Per the macOS default volume,
+          # asking for the wrong case would still match, so read the name.
+          exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")
+          test -x "$app/Contents/MacOS/$exe"
+          lipo -archs "$app/Contents/MacOS/$exe"
           # Ad-hoc signing has to be enough until a Developer ID exists; print
           # what the bundle got instead of failing when it is unsigned.
           codesign -dv "$app" 2>&1 | head -n 5 || true
 
       - name: Upload the app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Kept-macos-app
           path: src-tauri/target/release/bundle/macos/Kept.app
