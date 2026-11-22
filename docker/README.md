@@ -79,7 +79,7 @@ docker compose -f docker/compose.yaml down -v
 
 ## Where the Linux port stands
 
-`cargo check --all-targets` is green, `cargo test --lib` is **454 passing, 0
+`cargo check --all-targets` is green, `cargo test --lib` is **458 passing, 0
 failing** on Linux (475 on Windows), and the packaged app opens on the container
 desktop — setup wizard, SQLite migrations, global shortcuts and the tray all come
 up. Every feature in the table below was exercised through the app's own interface
@@ -89,32 +89,33 @@ Implemented for X11:
 
 | Area | Linux implementation |
 | --- | --- |
-| Clipboard writes | `arboard` (`write_flavoured`) for text and images; file lists go out as `text/uri-list` through `xclip`, and the watcher reads that target back |
+| Clipboard writes | one `arboard` context lives for the whole process, because an X11 selection dies with the connection that set it; file lists go out as `text/uri-list` through `xclip`, and the watcher reads that target back |
+| Clipboard auto-clear | the same owner clears by publishing an empty selection, which is the X11 equivalent of an empty clipboard |
 | Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
 | Region capture | `maim --select`, whose own X11 overlay is the drag surface |
 | Window capture | `xdotool selectwindow` picks the window, `maim --window <id>` grabs it |
+| Scrolling capture | the same tested stitcher as Windows, driven by `maim -g` frames and `xdotool` wheel/Page Down; the pointer is parked outside the page between steps |
 | Colour picker | the screen is frozen, `xdotool`'s crosshair takes the click, and the pixel under it is read back |
 | Screen recording | `ffmpeg -f x11grab` with the origin in the input name; audio stays a Windows choice |
+| `::` quick paste | the RECORD extension reports every key press without grabbing the keyboard, so the token is noticed in whichever app has the focus and the keycodes are mapped to characters through the keyboard map |
+| Paste, stack paste, auto-paste | `xdotool key ctrl+v` after `windowactivate --sync`, with the clipboard owner kept alive so the paste has something to read |
 | Desktop bounds | `xdotool getdisplaygeometry` |
-| Paste / window activation | `xdotool key ctrl+v`, `windowactivate` |
 | Trigger backspaces | `xdotool key --repeat BackSpace` |
 | OCR | `tesseract --psm 6` on a temporary PNG |
 | Overlay windows | opaque when no compositor is running, which is what the container's bare X session is |
+| Cloud folders | Dropbox roots from `~/.dropbox/info.json`, plus the `My Drive` / `Google Drive` folder names |
 
 Still Windows-only, and next in the port:
 
-- scrolling capture (`stitch.rs` drives the Win32 scroll bars), and the recorder's
-  region/window placement, which shares the Win32 drag surface
-- the onscreen ruler (`ruler.rs` is a Win32 overlay)
-- the `::` quick-paste popup: it needs a low-level keyboard hook, which X11 only
-  offers through XRecord
-- the Print Screen hook (`printscreen.rs`), so captures are only reachable from
-  the hotkeys in Settings on Linux
-- cloud-folder detection, `reveal_path` / `open_path` (they go through the XDG
-  desktop portal, and a bare X session has no session bus), and the KeptCraft
-  install paths
-- auto-paste after a copy: the clipboard write happens, but the synthesised Ctrl+V
-  does not land in the window that was in front
+- the recorder's region and window placement (`choose_region` / `choose_window`),
+  which share the Win32 drag surface
+- the onscreen ruler (`ruler.rs` is a Win32 overlay; only its measurement maths is
+  portable)
+- Print Screen as a global key: the option registers a `PrintScreen` shortcut, and
+  on this X server the grab is refused as already held. Captures stay reachable
+  from any capture shortcut set in Settings → Capture
+- `reveal_path` / `open_path`: they go through the XDG desktop portal, and a bare X
+  session has no session bus (and the container has no file manager)
 
 ## Known limits
 
@@ -123,6 +124,8 @@ Still Windows-only, and next in the port:
   countdown and the record frame are drawn opaque instead.
 - The clipboard is the container's own X clipboard. Kept inside the container
   cannot see Windows' clipboard.
+- A scrolled capture costs about a second per step on llvmpipe, so a long page
+  takes a minute or two.
 - macOS cannot be containerised. macOS-specific code is validated in CI
   (`macos-14` runner) or on a real Mac, never here.
 - OCR is tesseract, not `Windows.Media.Ocr`, so results differ from Windows.
