@@ -79,35 +79,51 @@ docker compose -f docker/compose.yaml down -v
 
 ## Where the Linux port stands
 
-`cargo check --all-targets` is green, `cargo test --lib` is **450 passing, 0
-failing** on Linux (475 on Windows), and `npm run tauri dev` opens the app on the
-container desktop — setup wizard, SQLite migrations, global shortcuts and the tray
-all come up.
+`cargo check --all-targets` is green, `cargo test --lib` is **454 passing, 0
+failing** on Linux (477 on Windows), and the packaged app opens on the container
+desktop — setup wizard, SQLite migrations, global shortcuts and the tray all come
+up. Every feature in the table below was exercised through the app's own interface
+inside the container.
 
 Implemented for X11:
 
 | Area | Linux implementation |
 | --- | --- |
-| Clipboard writes | `arboard` (`write_flavoured`); no HTML/RTF flavours, file lists go as text |
+| Clipboard writes | `arboard` (`write_flavoured`) for text and images; file lists go out as `text/uri-list` through `xclip`, and the watcher reads that target back |
 | Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
+| Region capture | `maim --select`, whose own X11 overlay is the drag surface |
+| Window capture | `xdotool selectwindow` picks the window, `maim --window <id>` grabs it |
+| Colour picker | the screen is frozen, `xdotool`'s crosshair takes the click, and the pixel under it is read back |
+| Screen recording | `ffmpeg -f x11grab` with the origin in the input name; audio stays a Windows choice |
 | Desktop bounds | `xdotool getdisplaygeometry` |
 | Paste / window activation | `xdotool key ctrl+v`, `windowactivate` |
 | Trigger backspaces | `xdotool key --repeat BackSpace` |
 | OCR | `tesseract --psm 6` on a temporary PNG |
+| Overlay windows | opaque when no compositor is running, which is what the container's bare X session is |
 
 Still Windows-only, and next in the port:
 
-- region and window capture (needs an X11 selection overlay), scrolling capture
+- scrolling capture (`stitch.rs` drives the Win32 scroll bars), and the recorder's
+  region/window placement, which shares the Win32 drag surface
+- the onscreen ruler (`ruler.rs` is a Win32 overlay)
+- the `::` quick-paste popup: it needs a low-level keyboard hook, which X11 only
+  offers through XRecord
 - the Print Screen hook (`printscreen.rs`), so captures are only reachable from
   the hotkeys in Settings on Linux
-- X11 file lists (`text/uri-list`), cloud-folder detection, `reveal_path`,
-  the KeptCraft install paths, and the recorder's Win32 pieces
+- cloud-folder detection, `reveal_path` / `open_path` (they go through the XDG
+  desktop portal, and a bare X session has no session bus), and the KeptCraft
+  install paths
+- auto-paste after a copy: the clipboard write happens, but the synthesised Ctrl+V
+  does not land in the window that was in front
 
 ## Known limits
 
 - No GPU: WebKit runs on llvmpipe, so animations are slow and 3D effects are off.
+- No compositor: transparent windows cannot be blended, so the recording bar, the
+  countdown and the record frame are drawn opaque instead.
 - The clipboard is the container's own X clipboard. Kept inside the container
   cannot see Windows' clipboard.
 - macOS cannot be containerised. macOS-specific code is validated in CI
   (`macos-14` runner) or on a real Mac, never here.
 - OCR is tesseract, not `Windows.Media.Ocr`, so results differ from Windows.
+
