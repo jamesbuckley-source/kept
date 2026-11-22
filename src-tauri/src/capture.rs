@@ -608,17 +608,44 @@ fn hides_for_capture(app: &AppHandle) -> bool {
 /// `maim` reads the root window, which is every screen at once.
 #[cfg(not(windows))]
 pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
-    with_app_hidden(app, delay, || grab_desktop().map(Some))
+    // Nothing to aim at, so the countdown simply runs before the shutter.
+    with_app_hidden(app, delay, |clock| {
+        if !clock.wait() {
+            return Ok(None);
+        }
+        grab_desktop().map(Some)
+    })
 }
 
-/// Runs a capture that needs the desktop to itself: the window goes away for as
-/// long as the user is drawing or clicking, and comes back afterwards whether the
-/// capture finished or was cancelled.
+/// The countdown a capture waits out between aiming and shooting.
+///
+/// It sits between the two halves of a capture on purpose: the delay is time to
+/// arrange what the picture will contain — open a menu, hover a control, move a
+/// window — which only means anything once the user has chosen the area or window.
+#[cfg(not(windows))]
+struct Delay<'a> {
+    app: &'a AppHandle,
+    seconds: u32,
+}
+
+#[cfg(not(windows))]
+impl Delay<'_> {
+    /// Waits the countdown out. `false` means it was cancelled, and no picture
+    /// should be taken.
+    fn wait(&self) -> bool {
+        self.seconds == 0 || crate::countdown::run(self.app, self.seconds)
+    }
+}
+
+/// Runs a capture with the app out of the picture for its whole length.
+///
+/// The closure owns the order of the two halves — aim, then [`Delay::wait`], then
+/// shoot — because only the capture knows which of them it has.
 #[cfg(not(windows))]
 fn with_app_hidden<T>(
     app: &AppHandle,
     delay: u32,
-    capture: impl FnOnce() -> Result<Option<T>>,
+    capture: impl FnOnce(&Delay) -> Result<Option<T>>,
 ) -> Result<Option<T>> {
     let hidden = tauri::Manager::state::<crate::AppState>(app)
         .store
@@ -627,15 +654,10 @@ fn with_app_hidden<T>(
     if hidden {
         crate::window::hide(app);
     }
-    // The countdown is the seconds the user asked for between pressing the button
-    // and the shutter, so it runs after the window is out of the way.
-    if delay > 0 && !crate::countdown::run(app, delay) {
-        if hidden {
-            crate::window::show(app);
-        }
-        return Ok(None);
-    }
-    let result = capture();
+    let result = capture(&Delay {
+        app,
+        seconds: delay,
+    });
     if hidden {
         crate::window::show(app);
     }
@@ -648,23 +670,86 @@ pub(crate) fn grab_desktop() -> Result<ClipContent> {
     grab_maim(&[])?.ok_or_else(|| AppError::msg("maim did not produce a picture"))
 }
 
-/// Hides the app and returns the pixels the user framed in `maim`'s own selection
-/// overlay, which is the X11 stand-in for the Win32 drag surface.
+/// Hides the app and returns the pixels of the rectangle the user framed.
+///
+/// The area is chosen *first* and the countdown runs afterwards, which is what
+/// makes a delay useful: it is time to arrange what the picture will contain, and
+/// that only means anything once the area is known. `maim` takes its picture the
+/// instant the drag ends, so with a countdown the rectangle comes from `slop`,
+/// which only selects, and the shutter is a second read of that rectangle.
 #[cfg(not(windows))]
 pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
-    with_app_hidden(app, delay, || grab_maim(&["--select"]))
+    with_app_hidden(app, delay, |clock| {
+        if delay > 0 && pump::available() {
+            let Some(geometry) = pump::choose_region()? else {
+                return Ok(None);
+            };
+            if !clock.wait() {
+                return Ok(None);
+            }
+            return grab_maim(&["--geometry", &geometry]);
+        }
+        // No countdown to insert between the choice and the shutter, so maim's own
+        // overlay does both in one pass.
+        if !clock.wait() {
+            return Ok(None);
+        }
+        grab_maim(&["--select"])
+    })
 }
 
-/// Hides the app, turns the pointer into a crosshair with `xdotool` and returns
-/// the window that was clicked.
+/// Hides the app, turns the pointer into a crosshair with `xdotool`, and captures
+/// the window that was clicked once any countdown has run out.
 #[cfg(not(windows))]
 pub fn capture_window(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
-    with_app_hidden(app, delay, || {
+    with_app_hidden(app, delay, |clock| {
         let Some(id) = selected_window()? else {
             return Ok(None);
         };
+        // Chosen first: the delay is for opening a menu in the window, hovering
+        // something in it, or moving it, all of which need the choice made.
+        if !clock.wait() {
+            return Ok(None);
+        }
         grab_maim(&["--window", &id])
     })
+}
+
+/// The rectangle picker that only selects, leaving the shutter to the caller.
+///
+/// `slop` is the one tool here that answers "what did the user frame?" without
+/// taking the picture in the same breath, which is what puts the choice before the
+/// countdown. It lives behind its own namespace so the capture reads as the two
+/// steps it is.
+#[cfg(not(windows))]
+mod pump {
+    use crate::error::{AppError, Result};
+
+    /// Whether a rectangle can be chosen on its own.
+    pub fn available() -> bool {
+        std::process::Command::new("slop")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    /// Lets the user frame a rectangle and answers the geometry `maim` takes.
+    ///
+    /// `WxH+X+Y` is slop's own default output, which is exactly maim's `-g`. A
+    /// right-click or Escape abandons the selection, which is a cancel rather than
+    /// an error.
+    pub fn choose_region() -> Result<Option<String>> {
+        let output = std::process::Command::new("slop")
+            .output()
+            .map_err(|e| AppError::msg(format!("slop is not available ({e}); install slop")))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let geometry = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok((!geometry.is_empty()).then_some(geometry))
+    }
 }
 
 /// Waits for the user to click a window and returns its X11 id.
@@ -922,7 +1007,6 @@ pub fn capture_scrolling(app: &AppHandle, delay: u32) -> Result<Option<ClipConte
     // so anything of ours over the window would be stitched into it.
     with_app_hidden(app, delay, scroll_target)
 }
-
 /// A window to scroll, as X11 describes it.
 #[cfg(not(windows))]
 #[derive(Clone)]
@@ -957,10 +1041,15 @@ impl Target {
 /// tall image, the X11 way: frames come from `maim`, the wheel from `xdotool`, and
 /// the stitching from the same tested code the Windows build uses.
 #[cfg(not(windows))]
-fn scroll_target() -> Result<Option<ClipContent>> {
+fn scroll_target(clock: &Delay) -> Result<Option<ClipContent>> {
     let Some(target) = pick_scroll_window()? else {
         return Ok(None);
     };
+    // The window is chosen before the countdown, as with a plain window capture:
+    // the delay is for rearranging the page it is about to scroll.
+    if !clock.wait() {
+        return Ok(None);
+    }
     sleep_pumping(SETTLE_DELAY);
 
     let centre = (

@@ -98,9 +98,10 @@ windows = { version = "0.62", features = [
 
 # The `::` popup needs to see the keys typed into other applications, which on X11
 # means the RECORD extension: it observes the server's event stream without
-# grabbing the keyboard, so typing is never interrupted.
+# grabbing the keyboard, so typing is never interrupted. SHAPE is what rounds the
+# capture countdown off on a desktop that has no compositor to blend it.
 [target.'cfg(not(windows))'.dependencies]
-x11rb = { version = "0.13", features = ["record"] }
+x11rb = { version = "0.13", features = ["record", "shape"] }
 
 [dev-dependencies]
 tempfile = "3"
