@@ -616,6 +616,10 @@ pub fn write_flavoured(
     rtf: Option<&str>,
 ) -> Result<String> {
     let _ = (html, rtf);
+    // A file list is published by `xclip`, which owns the selection itself.
+    if let ClipContent::Files(paths) = content {
+        return write_files(paths);
+    }
     let mut clip = arboard::Clipboard::new()
         .map_err(|e| AppError::Clipboard(format!("could not open the clipboard: {e}")))?;
     match content {
@@ -633,11 +637,7 @@ pub fn write_flavoured(
                 bytes: std::borrow::Cow::Borrowed(rgba.as_slice()),
             })
             .map_err(|e| AppError::Clipboard(e.to_string()))?,
-        // arboard cannot publish an X11 file list yet; the paths go as text
-        // until the paste side of the port writes `text/uri-list`.
-        ClipContent::Files(paths) => clip
-            .set_text(paths.join("\n"))
-            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+        ClipContent::Files(_) => unreachable!("handled above"),
     }
     Ok(hashing::of_content(content))
 }
@@ -663,10 +663,12 @@ pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
 }
 
 #[cfg(not(windows))]
-pub fn write_file_and_text(_path: &Path, _text: &str) -> Result<String> {
-    Err(AppError::Clipboard(
-        "writing files to the clipboard is only supported on Windows".into(),
-    ))
+pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
+    let paths = vec![path.to_string_lossy().into_owned()];
+    // One process owns the X11 selection at a time, so the file list and the
+    // source link cannot both be published: the file is the useful half.
+    let _ = text;
+    write_files(&paths)
 }
 
 /// Publishes one or more paths as `CF_HDROP` only.
@@ -694,11 +696,96 @@ pub fn write_files(paths: &[String]) -> Result<String> {
     Ok(hashing::of_content(&ClipContent::Files(paths.to_vec())))
 }
 
+/// Publishes the paths as an X11 file list, which is what file managers and chat
+/// apps paste as files.
 #[cfg(not(windows))]
-pub fn write_files(_paths: &[String]) -> Result<String> {
-    Err(AppError::Clipboard(
-        "writing files to the clipboard is only supported on Windows".into(),
-    ))
+pub fn write_files(paths: &[String]) -> Result<String> {
+    if paths.is_empty() {
+        return Err(AppError::Clipboard("there is no file to copy".into()));
+    }
+    let listing: String = paths
+        .iter()
+        .map(|path| format!("{}\r\n", file_uri(path)))
+        .collect();
+    set_selection("text/uri-list", &listing)?;
+    Ok(hashing::of_content(&ClipContent::Files(paths.to_vec())))
+}
+
+/// Hands one target to `xclip`, which then serves the selection for as long as
+/// anything wants it — the X11 stand-in for keeping a clipboard session open.
+#[cfg(not(windows))]
+fn set_selection(target: &str, contents: &str) -> Result<()> {
+    use std::io::Write as _;
+
+    let mut child = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", target, "-i"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Clipboard(format!("xclip is not available ({e}); install xclip")))?;
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(contents.as_bytes())
+    {
+        return Err(AppError::Clipboard(format!("xclip took no data: {e}")));
+    }
+    // xclip forks to keep serving the selection, so its parent exiting is success.
+    let output = child
+        .wait_with_output()
+        .map_err(|e| AppError::Clipboard(format!("xclip did not finish: {e}")))?;
+    if !output.status.success() {
+        return Err(AppError::Clipboard(format!(
+            "xclip failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+/// A local path spelled as the `file://` URI a `text/uri-list` carries.
+fn file_uri(path: &str) -> String {
+    let mut uri = String::from("file://");
+    for byte in path.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                uri.push(byte as char);
+            }
+            _ => uri.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    uri
+}
+
+/// The local paths a `text/uri-list` names, ignoring blank lines and comments.
+fn parse_uri_list(listing: &str) -> Vec<String> {
+    listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.strip_prefix("file://"))
+        .map(percent_decode)
+        .filter(|path| !path.is_empty())
+        .collect()
+}
+
+/// Undoes the `%XX` escapes in a URI, leaving anything unescaped as written.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let Ok(value) = u8::from_str_radix(&text[index + 1..index + 3], 16)
+        {
+            out.push(value);
+            index += 3;
+            continue;
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Empties the clipboard, used by the auto-clear timer.
@@ -1307,7 +1394,18 @@ fn read_text() -> Option<String> {
 
 #[cfg(not(windows))]
 fn read_file_list() -> Option<Vec<String>> {
-    None
+    // arboard has no file-list support, so the target is read with `xclip`. A
+    // failure means the clipboard is offering no such target, which is the usual
+    // case and not worth a log line.
+    let output = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard", "-t", "text/uri-list", "-o"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let paths = parse_uri_list(&String::from_utf8_lossy(&output.stdout));
+    (!paths.is_empty()).then_some(paths)
 }
 
 #[cfg(not(windows))]
@@ -1555,6 +1653,30 @@ mod tests {
     fn hdrop_handles_an_empty_selection() {
         let payload = build_hdrop(&[]);
         assert_eq!(payload.len(), 22, "header plus the list terminator");
+    }
+
+    #[test]
+    fn a_path_becomes_a_percent_escaped_file_uri() {
+        assert_eq!(file_uri("/tmp/plain.mp4"), "file:///tmp/plain.mp4");
+        assert_eq!(
+            file_uri("/home/me/My Recordings/a b.mp4"),
+            "file:///home/me/My%20Recordings/a%20b.mp4"
+        );
+        // Reserved characters a file manager would otherwise read as syntax.
+        assert_eq!(file_uri("/tmp/a#b?c"), "file:///tmp/a%23b%3Fc");
+    }
+
+    #[test]
+    fn a_uri_list_reads_back_as_the_paths_it_names() {
+        let listing = "# copied from Kept\r\nfile:///tmp/one.png\r\nfile:///tmp/two%20words.pdf\r\n";
+        assert_eq!(
+            parse_uri_list(listing),
+            vec!["/tmp/one.png".to_string(), "/tmp/two words.pdf".to_string()]
+        );
+        assert_eq!(parse_uri_list("file:///tmp/x\r\n\r\n"), vec!["/tmp/x".to_string()]);
+        assert!(parse_uri_list("").is_empty());
+        // A remote URI is not a local path, so it is left out rather than mangled.
+        assert!(parse_uri_list("https://example.com/x.png").is_empty());
     }
 
     #[cfg(windows)]
