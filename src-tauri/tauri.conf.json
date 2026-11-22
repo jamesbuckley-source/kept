@@ -28,7 +28,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: media://localhost http://media.localhost https://*.giphy.com; media-src 'self' blob: media://localhost http://media.localhost https://*.giphy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5174"
+      "csp": "default-src 'self'; img-src 'self' data: blob: media://localhost http://media.localhost https://*.giphy.com; media-src 'self' blob: media://localhost http://127.0.0.1:* http://media.localhost https://*.giphy.com; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:5174"
     }
   },
   "plugins": {

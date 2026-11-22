@@ -98,6 +98,7 @@ Implemented for X11:
 | Scrolling capture | the same tested stitcher as Windows, driven by `maim -g` frames and `xdotool` wheel/Page Down; the pointer is parked outside the page between steps, and the window's own bottom edge is measured out of each frame so a join never repeats it as a light line |
 | Colour picker | the screen is frozen, `xdotool`'s crosshair takes the click, and the pixel under it is read back |
 | Screen recording | `ffmpeg -f x11grab` with the origin in the input name; audio stays a Windows choice |
+| Playing a recording back | WebKitGTK's media player only opens what GStreamer has a source for, and a custom scheme is not one, so recordings are streamed from a loopback HTTP port with a per-run path secret; the handler, allowlist, sealing and ranges are the same ones the `media:` scheme uses, and images stay on the scheme |
 | `::` quick paste | the RECORD extension reports every key press without grabbing the keyboard, so the token is noticed in whichever app has the focus and the keycodes are mapped to characters through the keyboard map |
 | Paste, stack paste, auto-paste | `xdotool key ctrl+v` after `windowactivate --sync`, with the clipboard owner kept alive so the paste has something to read |
 | Desktop bounds | `xdotool getdisplaygeometry` |
@@ -121,6 +122,9 @@ Still Windows-only, and next in the port:
 ## Known limits
 
 - No GPU: WebKit runs on llvmpipe, so animations are slow and 3D effects are off.
+- Video needs `gstreamer1.0-libav` and `gstreamer1.0-plugins-bad` for the H.264 every
+  recording is encoded with; the image installs both, and without them a recording
+  plays as a black rectangle.
 - No compositor: transparent windows cannot be blended, so the recording bar, the
   countdown and the record frame are drawn opaque instead.
 - The clipboard is the container's own X clipboard. Kept inside the container

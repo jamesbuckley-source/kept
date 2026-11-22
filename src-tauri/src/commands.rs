@@ -219,6 +219,21 @@ pub fn capture_scrolling_window(app: AppHandle, state: State<'_, AppState>) -> R
     start_capture(app, state, capture::capture_scrolling)
 }
 
+/// The address videos are served from, where the `media:` scheme cannot play them.
+///
+/// WebKitGTK's media player has no source for a custom scheme, so on Linux the
+/// backend publishes recordings over a loopback port and the interface swaps the
+/// address it hands a `<video>` for this one. Windows plays them from the scheme
+/// itself, so there is nothing to swap and the answer is `None`.
+#[tauri::command]
+pub fn video_base() -> Option<String> {
+    #[cfg(not(windows))]
+    let base = crate::media_server::base().map(str::to_string);
+    #[cfg(windows)]
+    let base = None;
+    base
+}
+
 /// Starts the capture a global shortcut fired.
 ///
 /// It calls the same commands the toolbar buttons do, so the keyboard path and

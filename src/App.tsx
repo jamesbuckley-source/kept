@@ -133,6 +133,8 @@ import {
   stackPush,
   stackRemove,
   stackSplit,
+  setVideoBase,
+  videoBaseUrl,
   type PauseState,
 } from "./lib/ipc";
 import type { ClipAction } from "./lib/actions";
@@ -431,6 +433,28 @@ function MainApp() {
     getVersion()
       .then(setAppVersion)
       .catch(() => undefined);
+  }, []);
+
+  /**
+   * Where videos are played from, once the backend has told us.
+   *
+   * The address is only known after a round trip, so the first paint of the list
+   * may have been built with the scheme WebKit cannot play. Storing it in state
+   * re-renders the cards, whose players then load from the address that works.
+   */
+  const [, setVideoBaseReady] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    videoBaseUrl()
+      .then((base) => {
+        if (cancelled || base === null) return;
+        setVideoBase(base);
+        setVideoBaseReady(base);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // An update restarts the app, so a version change since the last launch is

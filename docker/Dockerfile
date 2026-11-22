@@ -18,6 +18,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Desktop, the browser that shows it, and the Linux stand-ins for the Win32
 # APIs Kept uses on Windows (capture, OCR, paste, recording).
+#
+# The GStreamer extras are what WebKit decodes video with: `libav` carries the
+# H.264 decoder every recording is encoded with, and `plugins-bad` the parser in
+# front of it. Without them a recording is a black rectangle with no explanation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb openbox stalonetray x11vnc novnc websockify \
       chromium ffmpeg maim xdotool xclip \
@@ -29,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl wget git unzip xz-utils file jq \
       libwebkit2gtk-4.1-0 libgtk-3-0 libayatana-appindicator3-1 \
       librsvg2-2 libxdo3 libasound2t64 \
+      gstreamer1.0-libav gstreamer1.0-plugins-bad \
     && rm -rf /var/lib/apt/lists/*
 
 COPY docker/entrypoint.sh /usr/local/bin/kept-desktop

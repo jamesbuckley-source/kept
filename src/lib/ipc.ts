@@ -724,12 +724,41 @@ export function revealDataDir(): Promise<void> {
 }
 
 /**
+ * The loopback server videos are played from, once the backend has answered.
+ *
+ * WebKitGTK hands a `<video>` to GStreamer, which only opens addresses it has a
+ * source for — http, file, blob — so a recording on the custom `media:` scheme
+ * fails with "src not supported". Linux therefore publishes them over a loopback
+ * port and reports the address at startup; Windows plays them from the scheme and
+ * reports nothing, which leaves every URL as it was.
+ */
+let videoBase: string | null = null;
+
+export function setVideoBase(base: string | null): void {
+  videoBase = base;
+}
+
+/** The address the backend serves videos from, or `null` where none is needed. */
+export function videoBaseUrl(): Promise<string | null> {
+  return invoke<string | null>("video_base");
+}
+
+/** True for the file names a `<video>` element is given. */
+function isVideoFile(fileName: string): boolean {
+  return /\.(mp4|webm|m4v)$/i.test(fileName);
+}
+
+/**
  * Builds a `media:` URL for a stored image file name.
  *
  * `convertFileSrc` produces the platform-correct form of the custom `media`
  * scheme registered in `lib.rs`; the backend handler accepts a bare file name.
+ * Videos go to the loopback server instead, where one is running.
  */
 export function mediaUrl(fileName: string): string {
+  if (videoBase && isVideoFile(fileName)) {
+    return `${videoBase}/${encodeURIComponent(fileName)}`;
+  }
   return convertFileSrc(fileName, "media");
 }
 

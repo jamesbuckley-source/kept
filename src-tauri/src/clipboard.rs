@@ -822,7 +822,7 @@ fn parse_uri_list(listing: &str) -> Vec<String> {
 
 /// Undoes the `%XX` escapes in a URI, leaving anything unescaped as written.
 #[cfg(not(windows))]
-fn percent_decode(text: &str) -> String {
+pub(crate) fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut index = 0;

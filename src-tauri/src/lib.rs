@@ -26,6 +26,8 @@ mod legacy;
 mod markdown;
 mod media;
 mod media_cache;
+#[cfg(not(windows))]
+mod media_server;
 mod models;
 mod ocr;
 mod palette;
@@ -165,6 +167,7 @@ pub fn run() {
     commands::record_resume,
     commands::record_stop,
     commands::clip_length,
+    commands::video_base,
             commands::open_settings_window,
             commands::open_settings_section,
             commands::open_add_clip_window,
@@ -343,6 +346,14 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         recorder: Arc::new(recorder::Recorder::new()),
     });
 
+    // WebKitGTK only plays a video from an address GStreamer has a source for, and
+    // `media:` is not one: recordings are streamed from a loopback port instead.
+    // Started after the state above so the handler can serve from it.
+    #[cfg(not(windows))]
+    if let Some(base) = media_server::start(handle.clone()) {
+        log::info!("serving videos from {base}");
+    }
+
     // Applied before the window is ever shown so the taskbar button matches the
     // saved setting from the very first paint.
     window::set_taskbar_visibility(&handle, settings.show_in_taskbar);
@@ -454,7 +465,11 @@ fn on_shortcut(app: &tauri::AppHandle, shortcut: &Shortcut, event: ShortcutEvent
     window::toggle(app);
 }
 
-fn serve_media(
+/// The bytes behind one media file, as the webview's scheme handler answers them.
+///
+/// Shared with the loopback server that plays videos on Linux, so the allowlist,
+/// sealing, caching, content type and range handling exist once.
+pub(crate) fn serve_media(
     app: &tauri::AppHandle,
     path: &str,
     range: Option<&str>,
