@@ -10,6 +10,30 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewWindow};
 
 use crate::models::{ClipDetail, ClipKind};
 
+/// Whether a window may ask for a transparent surface.
+///
+/// A transparent webview is an ARGB surface, and on X11 something has to blend it:
+/// with no compositing manager running, the pixels WebKit never painted come out
+/// as garbage, so the recording bar, the countdown and the frame would show
+/// fragments of themselves. Off Windows, transparency is therefore only asked for
+/// when the X server reports a compositor.
+fn transparency_available() -> bool {
+    #[cfg(windows)]
+    {
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        // `_NET_WM_CM_S0` is the EWMH way to name the compositing manager for
+        // screen 0; it is absent when nothing is blending.
+        std::process::Command::new("xprop")
+            .args(["-root", "_NET_WM_CM_S0"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains("window id"))
+            .unwrap_or(false)
+    }
+}
+
 /// Must match `app.windows[0].label` in tauri.conf.json.
 pub const WINDOW_LABEL: &str = "main";
 
@@ -697,7 +721,7 @@ fn open_record_bar<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     .inner_size(488.0, 140.0)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
+    .transparent(transparency_available())
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(false)
@@ -761,7 +785,7 @@ fn open_record_area<R: Runtime>(
     .inner_size(640.0, 480.0)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
+    .transparent(transparency_available())
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(true)
@@ -834,7 +858,7 @@ fn open_countdown<R: Runtime>(app: &AppHandle<R>, seconds: u32) -> tauri::Result
     .inner_size(side, side)
     .resizable(false)
     .decorations(false)
-    .transparent(true)
+    .transparent(transparency_available())
     .always_on_top(true)
     .skip_taskbar(true)
     // Deliberately not focused: the countdown runs while the user is still using
