@@ -161,7 +161,12 @@ pub fn restore_and_paste(handle: isize, delay_ms: u64) -> Result<()> {
     // nothing to activate — and `SetForegroundWindow` is refused for a process
     // that does not own the foreground, which is exactly our position there.
     // Only a paste that follows our window appearing needs the handover.
-    if !foreground_is(handle) {
+    //
+    // X11 asks anyway: the focus a window manager reports is the focus it has
+    // settled on, and the window that just closed leaves the answer stale for a
+    // moment, so the activation is what makes the keystroke land where the user
+    // was typing rather than wherever the last window was.
+    if !foreground_is(handle) || cfg!(not(windows)) {
         if !activate(handle) {
             return Err(AppError::msg(
                 "the window you copied from is no longer available",
@@ -171,7 +176,7 @@ pub fn restore_and_paste(handle: isize, delay_ms: u64) -> Result<()> {
         // Give the window manager a moment to finish the activation before the
         // keystroke arrives; without this the input can be discarded or routed to
         // the window that is still in the process of losing focus.
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(if cfg!(windows) { 40 } else { 180 }));
     }
     // The stack's own shortcut is a chord — Alt+Shift+V — and the user is often
     // still holding it when the paste lands, which turns Ctrl+V into
@@ -355,6 +360,11 @@ fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {    // Supplying the scan
 pub fn send_paste() -> Result<()> {
     // `--clearmodifiers` takes the place of `clear_modifiers`: xdotool drops the
     // chord the user is still holding before it types Ctrl+V.
+    log::debug!(
+        "pasting into window {:?} (focus is now {:?})",
+        target(),
+        active_window()
+    );
     xdotool(&["key", "--clearmodifiers", "ctrl+v"]).map(|_| ())
 }
 
