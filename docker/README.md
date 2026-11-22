@@ -95,7 +95,7 @@ Implemented for X11:
 | Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
 | Region capture | `maim --select`, whose own X11 overlay is the drag surface |
 | Window capture | `xdotool selectwindow` picks the window, `maim --window <id>` grabs it |
-| Scrolling capture | the same tested stitcher as Windows, driven by `maim -g` frames and `xdotool` wheel/Page Down; the pointer is parked outside the page between steps |
+| Scrolling capture | the same tested stitcher as Windows, driven by `maim -g` frames and `xdotool` wheel/Page Down; the pointer is parked outside the page between steps, and the window's own bottom edge is measured out of each frame so a join never repeats it as a light line |
 | Colour picker | the screen is frozen, `xdotool`'s crosshair takes the click, and the pixel under it is read back |
 | Screen recording | `ffmpeg -f x11grab` with the origin in the input name; audio stays a Windows choice |
 | `::` quick paste | the RECORD extension reports every key press without grabbing the keyboard, so the token is noticed in whichever app has the focus and the keycodes are mapped to characters through the keyboard map |

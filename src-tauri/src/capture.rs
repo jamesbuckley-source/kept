@@ -1672,6 +1672,10 @@ fn scroll_pages(
     // Which columns belong to the window and not to the page is decided from the
     // first two frames, then held for the rest of the capture.
     let mut frozen: Option<Vec<bool>> = None;
+    // How many rows at the bottom of a frame are the window's own edge rather than
+    // page, decided the same way and held for the same reason.
+    let mut edge: Option<u32> = None;
+    let mut usable = height;
 
     for step in 0..MAX_SCROLLS {
         // The hooks are delivered to this thread, so its queue has to be drained.
@@ -1725,7 +1729,23 @@ fn scroll_pages(
             ));
         }
 
-        stitched.extend_from_slice(&next[(next_height - offset) as usize * row_bytes..]);
+        // The window draws its own bottom edge inside the frame, so the last rows of
+        // every frame are not page. Appending them drew a light line through the
+        // stitched image at every join, so the band is measured from the first two
+        // frames and the first frame is cut back to end where the page does.
+        if edge.is_none() {
+            let rows = crate::stitch::bottom_edge_rows(&current, &next, width, height);
+            edge = Some(rows);
+            if rows > 0 {
+                usable = height - rows;
+                stitched.truncate(usable as usize * row_bytes);
+                total = total.min(usable);
+                log::info!("leaving the {rows} px window edge out of the bottom of the capture");
+            }
+        }
+
+        let from = (usable.saturating_sub(offset)) as usize * row_bytes;
+        stitched.extend_from_slice(&next[from..usable as usize * row_bytes]);
         total += offset;
         current = next;
         log::info!("scroll {step}: the page moved {offset} rows, {total} px so far");
@@ -1734,7 +1754,7 @@ fn scroll_pages(
     // A fixed sidebar is in every frame, so without this it would scroll down the
     // stitched image beside content it does not belong to.
     if let Some(frozen) = &frozen {
-        crate::stitch::hold_frozen_columns(&mut stitched, width, height, frozen);
+        crate::stitch::hold_frozen_columns(&mut stitched, width, usable, frozen);
         log::info!(
             "held {} fixed column(s) below the fold",
             frozen.iter().filter(|f| **f).count()
@@ -4073,6 +4093,67 @@ mod tests {
         assert_eq!(outline_color_for("#0078d7"), 0x00d7_7800);
         // A malformed value paints black rather than panicking mid-capture.
         assert_eq!(outline_color_for("nonsense"), 0);
+    }
+
+    /// A frame whose page scrolled to `position`, with `edge` rows of the window's
+    /// own bottom border painted inside the frame.
+    fn framed_page(position: u32, edge: u32) -> Vec<u8> {
+        let border = [220u8, 226, 232, 255];
+        let mut pixels = Vec::with_capacity((PAGE_WIDTH * PAGE_HEIGHT * 4) as usize);
+        for row in 0..PAGE_HEIGHT {
+            for column in 0..PAGE_WIDTH {
+                let value = if row + edge >= PAGE_HEIGHT {
+                    border
+                } else if row < PAGE_CHROME {
+                    page_colour(page_hash(7_000 + row, column))
+                } else {
+                    page_colour(page_hash(position + row - PAGE_CHROME, column))
+                };
+                pixels.extend_from_slice(&value);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn the_windows_own_bottom_edge_never_reaches_the_stitched_image() {
+        // Without this, the last rows of every frame — the window border, which
+        // repeats every step — were appended as if they were page, drawing a light
+        // line straight through the content at every join.
+        const EDGE: u32 = 2;
+        const STEPS: u32 = 3;
+        let mut position = 0;
+        let (width, total, rgba) = scroll_pages(
+            (PAGE_WIDTH, PAGE_HEIGHT, framed_page(0, EDGE)),
+            |_, _| {
+                if position >= STEPS * PAGE_STEP {
+                    return Advance::End;
+                }
+                position += PAGE_STEP;
+                Advance::Moved(PAGE_WIDTH, PAGE_HEIGHT, framed_page(position, EDGE))
+            },
+            &|| false,
+        );
+
+        assert_eq!(width, PAGE_WIDTH);
+        assert_eq!(
+            total,
+            PAGE_HEIGHT - EDGE + STEPS * PAGE_STEP,
+            "each join adds page rows only"
+        );
+        assert_eq!(rgba.len(), (total * PAGE_WIDTH * 4) as usize);
+
+        let border = [220u8, 226, 232];
+        for row in 0..total as usize {
+            let start = row * PAGE_WIDTH as usize * 4;
+            let pixels = &rgba[start..start + PAGE_WIDTH as usize * 4];
+            assert!(
+                pixels
+                    .chunks_exact(4)
+                    .any(|pixel| pixel[..3] != border),
+                "row {row} is the window's bottom edge, not page"
+            );
+        }
     }
 
     #[test]

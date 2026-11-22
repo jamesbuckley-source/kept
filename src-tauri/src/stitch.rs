@@ -226,6 +226,70 @@ pub fn hold_frozen_columns(stitched: &mut [u8], width: u32, fold: u32, frozen: &
     }
 }
 
+/// Widest band of window edge that will be looked for at the bottom of a frame.
+const MAX_BOTTOM_EDGE_ROWS: u32 = 12;
+/// A row of that band counts as flat when its channels differ by no more than this.
+const FLAT_EDGE_TOLERANCE: i32 = 2;
+
+/// Rows at the bottom of a frame that belong to the window rather than to the page.
+///
+/// A window paints its own bottom edge inside the rectangle a capture reads — a
+/// border, a rounded corner, a strip of window background. Those rows are the same
+/// pixels in every frame while the page scrolls under them, so appending the last
+/// `offset` rows of a frame draws that edge as a light line straight through the
+/// stitched image, once per step. Counting the band lets the caller append only the
+/// page's own rows.
+///
+/// Only a run of rows that are flat across the width in both frames is taken: that
+/// is what an edge looks like, and page content carries something that moves. The
+/// run is capped, so a page that happens to end in a blank margin cannot swallow
+/// more than a few rows of itself.
+pub fn bottom_edge_rows(previous: &[u8], next: &[u8], width: u32, height: u32) -> u32 {
+    let columns = width as usize;
+    let rows = height as usize;
+    let row_bytes = columns * 4;
+    if columns == 0 || rows == 0 || previous.len() != row_bytes * rows || next.len() != row_bytes * rows
+    {
+        return 0;
+    }
+
+    let mut edge = 0u32;
+    for row in (0..rows).rev() {
+        if edge >= MAX_BOTTOM_EDGE_ROWS {
+            break;
+        }
+        let at = row * row_bytes;
+        let below = &next[at..at + row_bytes];
+        if previous[at..at + row_bytes] != *below || !row_is_flat(below) {
+            break;
+        }
+        edge += 1;
+    }
+    edge
+}
+
+/// True when every pixel of a row has the same colour, up to antialiasing noise.
+///
+/// The outermost pixels are left out: a window's rounded bottom corners darken
+/// them, so a perfectly flat band of window edge is never flat across its full
+/// width.
+fn row_is_flat(row: &[u8]) -> bool {
+    let pixels = row.len() / 4;
+    if pixels <= 4 {
+        return false;
+    }
+    let mut low = [i32::MAX; 3];
+    let mut high = [i32::MIN; 3];
+    for pixel in row.chunks_exact(4).skip(2).take(pixels - 4) {
+        for (channel, value) in pixel[..3].iter().enumerate() {
+            let value = i32::from(*value);
+            low[channel] = low[channel].min(value);
+            high[channel] = high[channel].max(value);
+        }
+    }
+    (0..3).all(|channel| high[channel] - low[channel] <= FLAT_EDGE_TOLERANCE)
+}
+
 /// Widest scroll bar that will be looked for along the right edge.
 const MAX_SCROLLBAR_PX: usize = 32;
 /// Narrowest, so a flat one-pixel line is not mistaken for a bar.
@@ -748,5 +812,48 @@ mod tests {
             let at = row as usize * row_bytes + 30 * 4;
             assert_eq!(&stitched[at..at + 4], &expected[..], "row {row} of the scrolling pane");
         }
+    }
+
+    /// A frame whose last `edge` rows are the window's own bottom border.
+    fn frameless(position: u32, edge: u32) -> Vec<u8> {
+        let border = [220u8, 226, 232, 255];
+        let mut pixels = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
+        for row in 0..HEIGHT {
+            for column in 0..WIDTH {
+                let value = if row + edge >= HEIGHT {
+                    border
+                } else if row < CHROME {
+                    colour(hash_of(7_000 + row, column))
+                } else {
+                    colour(hash_of(position + row - CHROME, column))
+                };
+                pixels.extend_from_slice(&value);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn the_still_flat_rows_at_the_bottom_of_a_frame_are_the_window_edge() {
+        // Three rows of window border under a page that moved by 25.
+        assert_eq!(bottom_edge_rows(&frameless(0, 3), &frameless(25, 3), WIDTH, HEIGHT), 3);
+        // Two of them, as an X11 window leaves them after the fixed trim.
+        assert_eq!(bottom_edge_rows(&frameless(0, 2), &frameless(25, 2), WIDTH, HEIGHT), 2);
+    }
+
+    #[test]
+    fn moving_content_at_the_bottom_is_not_taken_for_window_edge() {
+        assert_eq!(bottom_edge_rows(&frame(0), &frame(25), WIDTH, HEIGHT), 0);
+    }
+
+    #[test]
+    fn a_blank_page_bottom_cannot_swallow_the_whole_frame() {
+        // The whole frame is flat and still, which is only ever true of furniture:
+        // the cap keeps a blank margin from eating the frame it is part of.
+        let still: Vec<u8> = [9u8, 9, 9, 255].repeat((WIDTH * HEIGHT) as usize);
+        assert_eq!(
+            bottom_edge_rows(&still, &still, WIDTH, HEIGHT),
+            MAX_BOTTOM_EDGE_ROWS
+        );
     }
 }
