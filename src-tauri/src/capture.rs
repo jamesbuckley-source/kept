@@ -24,7 +24,6 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 #[cfg(windows)]
 use std::sync::{Mutex, MutexGuard, Once};
-#[cfg(windows)]
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -76,50 +75,39 @@ const ELEMENT_STEP: i32 = 3;
 const ELEMENT_REFRESH: Duration = Duration::from_millis(600);
 
 /// How long a scrolled window gets to repaint before the next frame is read.
-#[cfg(windows)]
 const SETTLE_DELAY: Duration = Duration::from_millis(320);
 /// How long a step waits for the window to move before the next way of scrolling is
 /// tried. A wheel is delivered at once, so a page that is going to move has almost
 /// always started by now; the rest of the settle window is only for a page that is
 /// already moving and has yet to stop.
-#[cfg(windows)]
 const MOVE_GRACE: Duration = Duration::from_millis(900);
 /// The fallbacks are only reached when the wheel did nothing, and if they work at
 /// all they work immediately — so they are given less of the wait, which is what
 /// keeps the end of a long page from costing several seconds.
-#[cfg(windows)]
 const FALLBACK_GRACE: Duration = Duration::from_millis(450);
 /// Gap between the reads that check whether a scrolled window has moved, and then
 /// whether it has stopped moving.
-#[cfg(windows)]
 const SCROLL_POLL: Duration = Duration::from_millis(60);
 /// How long one scroll burst gets to move the window and come to rest.
-#[cfg(windows)]
 const SCROLL_TIMEOUT: Duration = Duration::from_millis(2_500);
 /// Mean per-channel difference at which a column is taken to belong to the window
 /// rather than to the page: a sidebar or gutter that does not scroll.
-#[cfg(windows)]
 const FROZEN_COLUMN_TOLERANCE: f32 = 1.5;
 /// Rows dropped from the bottom of every scrolled frame. The captured frame ends
 /// on the bottom edge of the captured rectangle, and repeating that edge at every
 /// join can draw a line right across the stitched image.
-#[cfg(windows)]
 const FRAME_BOTTOM_TRIM: u32 = 2;
 /// Gap between moving the pointer and wheeling, so the window sees the move first.
-#[cfg(windows)]
 const POINTER_SETTLE: Duration = Duration::from_millis(40);
 /// Wheel notches per scroll step. Deliberately small: the stitching compares bands
 /// in the lower half of the frame, so a step that moved most of a screen would
 /// leave too little of the old frame to match against.
-#[cfg(windows)]
 const SCROLL_NOTCHES: i32 = 1;
 /// Stop after this many scroll steps, so a runaway page cannot capture forever.
 /// At four notches a step this is roughly 15,000 px of page.
-#[cfg(windows)]
 const MAX_SCROLLS: u32 = 200;
 /// A stitched capture taller than this is not useful and eats memory at 4 bytes a
 /// pixel, so the run stops there.
-#[cfg(windows)]
 const MAX_SCROLL_HEIGHT: u32 = 20_000;
 /// `WHEEL_DELTA`: one notch of a mouse wheel.
 #[cfg(windows)]
@@ -638,9 +626,14 @@ fn with_app_hidden<T>(
         .hide_on_capture;
     if hidden {
         crate::window::hide(app);
-        std::thread::sleep(std::time::Duration::from_millis(
-            u64::from(delay).min(2_000),
-        ));
+    }
+    // The countdown is the seconds the user asked for between pressing the button
+    // and the shutter, so it runs after the window is out of the way.
+    if delay > 0 && !crate::countdown::run(app, delay) {
+        if hidden {
+            crate::window::show(app);
+        }
+        return Ok(None);
     }
     let result = capture();
     if hidden {
@@ -918,11 +911,145 @@ impl Drop for RecordOutline {
     }
 }
 
+/// Hides the app, lets the user pick a window and scrolls it page by page.
+///
+/// X11 routes the wheel to whatever is under the pointer, so the window does not
+/// have to be focusable: the pointer is parked over the page for each notch and
+/// taken away again before the frame is read.
 #[cfg(not(windows))]
-pub fn capture_scrolling(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
-    Err(AppError::msg(
-        "scrolling captures are only supported on Windows",
-    ))
+pub fn capture_scrolling(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    // Hidden for the whole run, not just the pick: the frames come off the desktop,
+    // so anything of ours over the window would be stitched into it.
+    with_app_hidden(app, delay, scroll_target)
+}
+
+/// A window to scroll, as X11 describes it.
+#[cfg(not(windows))]
+#[derive(Clone)]
+struct Target {
+    /// The X11 window id, which is what `xdotool` drives and `maim` measures.
+    id: u64,
+    /// The window's rectangle on the root window.
+    rect: Rect,
+    /// X11 has no automation tree to ask, so the window is the page as far as a
+    /// scrolling capture can tell.
+    content: Rect,
+    title: String,
+}
+
+#[cfg(not(windows))]
+impl Target {
+    /// Best effort, and deliberately not `--sync`: the window that was clicked is
+    /// often a browser's render widget rather than a top-level window, and waiting
+    /// for that to report itself active takes fifteen seconds before giving up.
+    /// The wheel does not need the focus anyway — it follows the pointer.
+    fn activate(&self) -> bool {
+        let _ = crate::paste::xdotool(&["windowactivate", &self.id.to_string()]);
+        true
+    }
+
+    /// Nothing to retry: the wheel is real input, and a window that ignores it
+    /// ignores the Page Down that follows just as well.
+    fn wheel_fallback(&self, _centre: (i32, i32)) {}
+}
+
+/// Picks a window, scrolls it a page at a time and stitches the frames into one
+/// tall image, the X11 way: frames come from `maim`, the wheel from `xdotool`, and
+/// the stitching from the same tested code the Windows build uses.
+#[cfg(not(windows))]
+fn scroll_target() -> Result<Option<ClipContent>> {
+    let Some(target) = pick_scroll_window()? else {
+        return Ok(None);
+    };
+    sleep_pumping(SETTLE_DELAY);
+
+    let centre = (
+        (target.content.left + target.content.right) / 2,
+        (target.content.top + target.content.bottom) / 2,
+    );
+    // The pointer has to be off the page while frames are read: a link under it
+    // draws a hover state or a URL preview, so frames would differ by chrome that
+    // belongs to the pointer rather than to the page.
+    let park = park_point(target.content);
+    let _cursor = CursorPark::new(park);
+    sleep_pumping(SCROLL_POLL);
+
+    // A frame taken before the page has repainted would look like "nothing moved",
+    // so the first reading waits for two identical frames in a row.
+    let Some((width, height, current)) = settled_screen(&target, &[], None, SCROLL_TIMEOUT) else {
+        return Err(AppError::msg(
+            "could not read the window from the screen for a scrolling capture",
+        ));
+    };
+    log::info!(
+        "scrolling capture of {}: {width}x{height} to start",
+        if target.title.is_empty() {
+            "an untitled window".to_string()
+        } else {
+            format!("\"{}\"", target.title)
+        }
+    );
+
+    // The bar down the right edge is window furniture that moves every time the
+    // page does, so a stitched image repeats it. It is measured once, from the
+    // first frame, and every frame — this one included — is read without it.
+    let bar = crate::stitch::scrollbar_width(&current, width, height);
+    let keep_width = if bar == 0 { None } else { Some(width - bar as u32) };
+    if let Some(keep) = keep_width {
+        log::info!("leaving the {bar} px scroll bar out of the capture, keeping {keep} px of width");
+    }
+    let (width, height, current) = crop_to(width, height, current, keep_width);
+
+    // Nothing cancels this run yet: X11 has no key hook to poll, so it ends at the
+    // bottom of the page or at the step ceiling.
+    let escaped = || false;
+    let (width, total, stitched) = scroll_pages(
+        (width, height, current),
+        |step, current| advance_page(&target, centre, park, current, step, keep_width, &escaped),
+        &escaped,
+    );
+
+    Ok(Some(ClipContent::Image {
+        width,
+        height: total,
+        rgba: stitched,
+    }))
+}
+
+/// Returns the window the user clicked, measured and named.
+#[cfg(not(windows))]
+fn pick_scroll_window() -> Result<Option<Target>> {
+    let Some(id) = selected_window()? else {
+        return Ok(None);
+    };
+    // `selectwindow` answers with the deepest window under the click, which for a
+    // browser is the page itself: exactly the part a scrolling capture wants.
+    let id = id.trim().to_string();
+    let geometry = crate::paste::xdotool(&["getwindowgeometry", "--shell", &id])?;
+    let (Some(left), Some(top), Some(width), Some(height)) = (
+        shell_int(&geometry, "X"),
+        shell_int(&geometry, "Y"),
+        shell_int(&geometry, "WIDTH"),
+        shell_int(&geometry, "HEIGHT"),
+    ) else {
+        return Err(AppError::msg("could not measure the window that was picked"));
+    };
+    if width <= 0 || height <= 0 {
+        return Ok(None);
+    }
+    let title = crate::paste::xdotool(&["getwindowname", &id]).unwrap_or_default();
+    let rect = Rect::new(
+        left as i32,
+        top as i32,
+        (left + width) as i32,
+        (top + height) as i32,
+    );
+    Ok(Some(Target {
+        id: id.parse().unwrap_or(0),
+        rect,
+        content: rect,
+        title,
+    }))
 }
 
 /// Only one overlay can own the mouse and the shared drag state at a time.
@@ -1347,19 +1474,10 @@ fn scrolling_flow(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
 /// The window's own title bar is the first choice, because the wheel still routes to
 /// the window from there and no page element can react to it. A window that fills the
 /// screen has nowhere outside it to stand, so the nearest edge of the desktop is used.
-#[cfg(windows)]
 fn park_point(content: Rect) -> (i32, i32) {
-    // SAFETY: reading display metrics has no preconditions.
-    let (virtual_left, virtual_top, virtual_width, virtual_height) = unsafe {
-        (
-            win32::GetSystemMetrics(win32::SM_XVIRTUALSCREEN),
-            win32::GetSystemMetrics(win32::SM_YVIRTUALSCREEN),
-            win32::GetSystemMetrics(win32::SM_CXVIRTUALSCREEN),
-            win32::GetSystemMetrics(win32::SM_CYVIRTUALSCREEN),
-        )
-    };
-    let virtual_right = virtual_left + virtual_width;
-    let virtual_bottom = virtual_top + virtual_height;
+    let desktop = desktop_bounds();
+    let (virtual_left, virtual_top) = (desktop.left, desktop.top);
+    let (virtual_right, virtual_bottom) = (desktop.right, desktop.bottom);
     let centre_x = (content.left + content.right) / 2;
 
     let candidates = [
@@ -1391,6 +1509,50 @@ struct CursorPark {
     original: Option<(i32, i32)>,
 }
 
+/// The same promise through `xdotool`: X11 has no way to move the pointer other
+/// than asking the server to warp it.
+#[cfg(not(windows))]
+struct CursorPark {
+    original: Option<(i32, i32)>,
+}
+
+#[cfg(not(windows))]
+impl CursorPark {
+    fn new(parked: (i32, i32)) -> Self {
+        let original = crate::paste::xdotool(&["getmouselocation", "--shell"])
+            .ok()
+            .and_then(|report| pointer_of(&report));
+        park_cursor(parked);
+        Self { original }
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for CursorPark {
+    fn drop(&mut self) {
+        if let Some(point) = self.original {
+            park_cursor(point);
+        }
+    }
+}
+
+/// Reads `X=…` / `Y=…` out of `xdotool getmouselocation --shell`.
+#[cfg(not(windows))]
+fn pointer_of(report: &str) -> Option<(i32, i32)> {
+    let x = shell_int(report, "X")?;
+    let y = shell_int(report, "Y")?;
+    Some((x as i32, y as i32))
+}
+
+/// Reads one `KEY=value` integer out of `xdotool --shell` output.
+#[cfg(not(windows))]
+fn shell_int(report: &str, key: &str) -> Option<i64> {
+    report.lines().find_map(|line| {
+        let value = line.trim().strip_prefix(key)?.strip_prefix('=')?;
+        value.trim().parse().ok()
+    })
+}
+
 #[cfg(windows)]
 impl CursorPark {
     fn new(parked: (i32, i32)) -> Self {
@@ -1420,7 +1582,6 @@ impl Drop for CursorPark {
 }
 
 /// How one attempt to scroll the page turned out.
-#[cfg(windows)]
 enum Advance {
     /// The page moved, and this is the frame once it had come to rest.
     Moved(u32, u32, Vec<u8>),
@@ -1436,7 +1597,6 @@ enum Advance {
 /// yet is indistinguishable from the bottom of the page, so the three ways of
 /// scrolling are tried before the end is called. Escape is checked between the
 /// attempts, so a press ends the step it lands in instead of after the last one.
-#[cfg(windows)]
 fn advance_page(
     target: &Target,
     centre: (i32, i32),
@@ -1448,7 +1608,7 @@ fn advance_page(
 ) -> Advance {
     // Anything that steals focus between steps would eat the wheel, so the
     // target is re-asserted before every burst.
-    if !crate::paste::activate(target.hwnd.0 as isize) {
+    if !target.activate() {
         return Advance::Unfocused;
     }
 
@@ -1461,7 +1621,7 @@ fn advance_page(
         log::info!(
             "scroll {step}: the wheel was accepted {sent}/2 and the window did not move; posting the message"
         );
-        post_wheel(target.hwnd, centre);
+        target.wheel_fallback(centre);
         frame = settled_screen(target, current, keep_width, FALLBACK_GRACE);
     }
     if frame.is_none() && !escaped() {
@@ -1486,13 +1646,20 @@ fn park_cursor(point: (i32, i32)) {
     }
 }
 
+#[cfg(not(windows))]
+fn park_cursor(point: (i32, i32)) {
+    if let Err(e) = crate::paste::xdotool(&["mousemove", &point.0.to_string(), &point.1.to_string()])
+    {
+        log::warn!("could not move the pointer: {e}");
+    }
+}
+
 /// Runs the scroll loop, stitching each settled frame onto the last, and hands back
 /// the image captured so far.
 ///
 /// `advance` performs one scroll attempt; `escaped` reports a cancellation, and is
 /// checked before every attempt and again after each one, so a press stops the run
 /// without waiting for the page to end.
-#[cfg(windows)]
 fn scroll_pages(
     start: (u32, u32, Vec<u8>),
     mut advance: impl FnMut(u32, &[u8]) -> Advance,
@@ -1508,6 +1675,7 @@ fn scroll_pages(
 
     for step in 0..MAX_SCROLLS {
         // The hooks are delivered to this thread, so its queue has to be drained.
+        #[cfg(windows)]
         picker::pump();
         if escaped() {
             log::info!("scrolling stopped after {step} step(s): Esc was pressed");
@@ -1577,7 +1745,6 @@ fn scroll_pages(
 }
 
 /// Drops the window's bottom edge rows, so a join cannot repeat them.
-#[cfg(windows)]
 fn trim_bottom(width: u32, height: u32, mut rgba: Vec<u8>) -> (u32, u32, Vec<u8>) {
     if height <= FRAME_BOTTOM_TRIM || width == 0 {
         return (width, height, rgba);
@@ -1605,6 +1772,13 @@ fn sleep_pumping(total: Duration) {
     }
 }
 
+/// X11 has no message queue to drain: the hooks and the banner that need one are
+/// Win32 windows, so none of this thread's work arrives through a queue.
+#[cfg(not(windows))]
+fn sleep_pumping(total: Duration) {
+    std::thread::sleep(total);
+}
+
 /// Reads the window's rectangle from the desktop.
 ///
 /// The screen is the only source that is never stale: `PrintWindow` renders from
@@ -1621,6 +1795,54 @@ fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
     }
 }
 
+/// The same read through `maim`: a window's own backing store can be a frame or
+/// two behind what the user is looking at, so the pixels come off the root window.
+#[cfg(not(windows))]
+fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
+    match grab_rect(target.content) {
+        Ok((width, height, rgba)) => Some(trim_bottom(width, height, rgba)),
+        Err(e) => {
+            log::warn!("could not read the window from the screen: {e}");
+            None
+        }
+    }
+}
+
+/// Reads a rectangle of the desktop into an RGBA buffer.
+#[cfg(not(windows))]
+fn grab_rect(rect: Rect) -> Result<(u32, u32, Vec<u8>)> {
+    let width = rect.width().max(0);
+    let height = rect.height().max(0);
+    if width == 0 || height == 0 {
+        return Err(AppError::msg("the window has no area to read"));
+    }
+    let path = std::env::temp_dir().join(format!("kept-scroll-{}.png", uuid::Uuid::new_v4()));
+    let geometry = format!("{width}x{height}+{}+{}", rect.left, rect.top);
+    let output = std::process::Command::new("maim")
+        // Without this maim super-imposes the pointer onto the picture.
+        .arg("--hidecursor")
+        .arg("-g")
+        .arg(&geometry)
+        .arg(&path)
+        .output()
+        .map_err(|e| AppError::msg(format!("maim is not available ({e}); install maim")))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&path);
+        return Err(AppError::msg(format!(
+            "maim failed: {}",
+            String::from_utf8_lossy(&output.stderr).lines().last().unwrap_or("").trim()
+        )));
+    }
+    match decode_png(&path)? {
+        ClipContent::Image {
+            width,
+            height,
+            rgba,
+        } => Ok((width, height, rgba)),
+        _ => Err(AppError::msg("the capture was not an image")),
+    }
+}
+
 /// Reads the window from the desktop until it has moved and then stopped.
 ///
 /// Waiting for the frame to change first is what keeps a read taken before the
@@ -1629,7 +1851,6 @@ fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
 /// never moved, which is what the bottom of the page looks like. `keep_width` drops
 /// the scroll bar's columns as each frame is read, so everything downstream — the
 /// comparison, the measurement and the stitch — only ever sees page pixels.
-#[cfg(windows)]
 fn settled_screen(
     target: &Target,
     previous: &[u8],
@@ -1672,7 +1893,6 @@ fn settled_screen(
 }
 
 /// Narrows a frame to the part of the window that is page, not furniture.
-#[cfg(windows)]
 fn crop_to(
     width: u32,
     height: u32,
@@ -1691,7 +1911,6 @@ fn crop_to(
 
 /// Saves a frame beside the log, so a capture that cannot be stitched can be
 /// looked at instead of guessed about.
-#[cfg(windows)]
 fn dump_frame(name: &str, width: u32, height: u32, rgba: &[u8]) {
     let path = std::env::temp_dir().join(format!("kept-{name}.png"));
     match image::save_buffer(&path, rgba, width, height, image::ColorType::Rgba8) {
@@ -1701,7 +1920,6 @@ fn dump_frame(name: &str, width: u32, height: u32, rgba: &[u8]) {
 }
 
 /// How far the page moved between two frames of the same window.
-#[cfg(windows)]
 fn measure(previous: &[u8], frame: (u32, u32, Vec<u8>)) -> Option<u32> {
     let (width, height, rgba) = frame;
     crate::stitch::scroll_offset(previous, &rgba, width, height)
@@ -1709,6 +1927,38 @@ fn measure(previous: &[u8], frame: (u32, u32, Vec<u8>)) -> Option<u32> {
 
 /// Scrolls a focused window by a page with the keyboard, for windows that ignore
 /// both the wheel and the wheel message.
+#[cfg(not(windows))]
+fn page_down(_target: &Target, centre: (i32, i32)) {
+    // The pointer has to be over the window for the key to land where the wheel
+    // would have; focus is already on the target.
+    park_cursor(centre);
+    sleep_pumping(POINTER_SETTLE);
+    if let Err(e) = crate::paste::xdotool(&["key", "--clearmodifiers", "Next"]) {
+        log::warn!("could not press Page Down: {e}");
+    }
+    sleep_pumping(POINTER_SETTLE);
+}
+
+/// Wheels the window under the pointer.
+///
+/// The wheel is sent as real input rather than as an event addressed to the
+/// window: a toolkit that ignores synthetic events still handles XTEST, which is
+/// exactly what a mouse does.
+#[cfg(not(windows))]
+fn scroll_window(centre: (i32, i32)) -> u32 {
+    park_cursor(centre);
+    sleep_pumping(POINTER_SETTLE);
+    let notches = SCROLL_NOTCHES.max(1);
+    match crate::paste::xdotool(&["click", "--repeat", &notches.to_string(), "5"]) {
+        // The count is only used for the log line that explains a missed step.
+        Ok(_) => notches as u32,
+        Err(e) => {
+            log::warn!("could not wheel the window: {e}");
+            0
+        }
+    }
+}
+
 #[cfg(windows)]
 fn page_down(_target: &Target, centre: (i32, i32)) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -2339,6 +2589,20 @@ struct Target {
     /// What the chip says the capture will be.
     label: String,
     title: String,
+}
+
+#[cfg(windows)]
+impl Target {
+    /// Bringing the window to the front is also what makes it the wheel's target.
+    fn activate(&self) -> bool {
+        crate::paste::activate(self.hwnd.0 as isize)
+    }
+
+    /// A window that ignores synthetic input may still honour the wheel as a
+    /// message, which is why the second attempt goes that way.
+    fn wheel_fallback(&self, centre: (i32, i32)) {
+        post_wheel(self.hwnd, centre);
+    }
 }
 
 /// The window under the pointer, before anything is known about its elements.
@@ -3985,5 +4249,21 @@ mod linux_tests {
             }
             _ => panic!("a screen capture should be an image"),
         }
+    }
+
+    /// A scrolling capture reads the picked window's geometry and the pointer
+    /// position out of the same `xdotool --shell` report shape, so the parse has to
+    /// pick the field it was asked for rather than the first number on the line.
+    #[test]
+    fn the_picked_windows_geometry_is_read_from_the_shell_report() {
+        let report = "WINDOW=2097152\nX=1031\nY=8\nWIDTH=786\nHEIGHT=1052\nSCREEN=0\n";
+        assert_eq!(shell_int(report, "X"), Some(1031));
+        assert_eq!(shell_int(report, "Y"), Some(8));
+        assert_eq!(shell_int(report, "WIDTH"), Some(786));
+        assert_eq!(shell_int(report, "HEIGHT"), Some(1052));
+        assert_eq!(shell_int(report, "WINDOW"), Some(2_097_152));
+        assert_eq!(shell_int(report, "Z"), None);
+        assert_eq!(pointer_of("X=1201\nY=384\n"), Some((1201, 384)));
+        assert_eq!(pointer_of("SCREEN=0\n"), None);
     }
 }
