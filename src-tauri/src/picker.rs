@@ -4,12 +4,15 @@
 //! the window hides, the next left click anywhere on screen is sampled, and the
 //! window comes back with the result. Escape cancels.
 
+#[cfg(windows)]
 use std::sync::Once;
 #[cfg(windows)]
 use std::sync::Mutex;
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+#[cfg(windows)]
+use std::time::Instant;
+use std::time::Duration;
 
 use tauri::AppHandle;
 
@@ -86,30 +89,50 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     outcome
 }
 
-/// X11 cannot watch for a click from outside a window, so the pick is the colour
-/// under the pointer at the instant the shortcut fires — where the Windows
-/// picker's click would have landed.
+/// X11 cannot watch for a click from outside a window, so the screen is frozen
+/// first and the click is taken with `xdotool`'s crosshair: the pixel under the
+/// pointer when it returns is the one that was clicked, which is where the Windows
+/// picker's click would have landed. Escape cancels.
 #[cfg(not(windows))]
 pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     use crate::models::ClipContent;
 
-    crate::window::hide(app);
-    std::thread::sleep(std::time::Duration::from_millis(120));
+    window::hide(app);
+    std::thread::sleep(Duration::from_millis(120));
     let frame = crate::capture::grab_desktop();
-    crate::window::show(app);
+    let point = clicked_point();
+    window::show(app);
 
+    let frame = frame?;
+    let Some((x, y)) = point? else {
+        return Ok(None);
+    };
     let ClipContent::Image {
         width,
         height,
         rgba,
-    } = frame?
+    } = frame
     else {
         return Ok(None);
     };
+    Ok(hex_at(&rgba, width, height, x, y))
+}
 
+/// Where the pointer was when the user clicked to pick.
+#[cfg(not(windows))]
+fn clicked_point() -> Result<Option<(i64, i64)>> {
+    if crate::capture::selected_window()?.is_none() {
+        return Ok(None);
+    }
     let report = crate::paste::xdotool(&["getmouselocation", "--shell"])?;
-    let mut x: Option<i64> = None;
-    let mut y: Option<i64> = None;
+    Ok(pointer_position(&report))
+}
+
+/// Reads `X=…` / `Y=…` out of `xdotool getmouselocation --shell`.
+#[cfg(not(windows))]
+fn pointer_position(report: &str) -> Option<(i64, i64)> {
+    let mut x = None;
+    let mut y = None;
     for line in report.lines() {
         if let Some(value) = line.strip_prefix("X=") {
             x = value.trim().parse().ok();
@@ -118,20 +141,19 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
             y = value.trim().parse().ok();
         }
     }
-    let (Some(x), Some(y)) = (x, y) else {
-        return Ok(None);
-    };
+    Some((x?, y?))
+}
+
+/// The `#rrggbb` of one pixel of a grabbed RGBA frame; `None` when the point is
+/// off the picture.
+#[cfg(not(windows))]
+fn hex_at(rgba: &[u8], width: u32, height: u32, x: i64, y: i64) -> Option<String> {
     if x < 0 || y < 0 || x >= i64::from(width) || y >= i64::from(height) {
-        return Ok(None);
+        return None;
     }
     let offset = (y as usize * width as usize + x as usize) * 4;
-    let Some(pixel) = rgba.get(offset..offset + 4) else {
-        return Ok(None);
-    };
-    Ok(Some(format!(
-        "#{:02x}{:02x}{:02x}",
-        pixel[0], pixel[1], pixel[2]
-    )))
+    let pixel = rgba.get(offset..offset + 4)?;
+    Some(format!("#{:02x}{:02x}{:02x}", pixel[0], pixel[1], pixel[2]))
 }
 
 #[cfg(windows)]
@@ -850,5 +872,28 @@ mod tests {
             !KeyboardBlocker::escaped(),
             "a press must not leak into the next capture"
         );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_pointer_is_read_from_the_shell_report() {
+        let report = "WINDOW=1234\nSCREEN=0\nX=640\nY=360\n";
+        assert_eq!(pointer_position(report), Some((640, 360)));
+        assert_eq!(pointer_position("X=0\nY=0\n"), Some((0, 0)));
+        assert_eq!(pointer_position("WINDOW=1\nSCREEN=0\n"), None);
+        assert_eq!(pointer_position("X=none\nY=5\n"), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_frame_pixel_is_read_by_row_and_column() {
+        // A 2×1 frame: red pixel, then green.
+        let rgba = [255, 0, 0, 255, 0, 255, 0, 128];
+        assert_eq!(hex_at(&rgba, 2, 1, 0, 0).unwrap(), "#ff0000");
+        assert_eq!(hex_at(&rgba, 2, 1, 1, 0).unwrap(), "#00ff00");
+        assert_eq!(hex_at(&rgba, 2, 1, 1, 1), None, "y is off the bottom");
+        assert_eq!(hex_at(&rgba, 2, 1, 2, 0), None, "x is off the right");
+        assert_eq!(hex_at(&rgba, 2, 1, -1, 0), None, "negative x is outside");
+        assert_eq!(hex_at(&[], 0, 0, 0, 0), None, "an empty frame has no pixels");
     }
 }

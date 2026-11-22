@@ -620,6 +620,18 @@ fn hides_for_capture(app: &AppHandle) -> bool {
 /// `maim` reads the root window, which is every screen at once.
 #[cfg(not(windows))]
 pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, || grab_desktop().map(Some))
+}
+
+/// Runs a capture that needs the desktop to itself: the window goes away for as
+/// long as the user is drawing or clicking, and comes back afterwards whether the
+/// capture finished or was cancelled.
+#[cfg(not(windows))]
+fn with_app_hidden<T>(
+    app: &AppHandle,
+    delay: u32,
+    capture: impl FnOnce() -> Result<Option<T>>,
+) -> Result<Option<T>> {
     let hidden = tauri::Manager::state::<crate::AppState>(app)
         .store
         .settings()
@@ -630,45 +642,96 @@ pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>
             u64::from(delay).min(2_000),
         ));
     }
-    let result = grab_desktop();
+    let result = capture();
     if hidden {
         crate::window::show(app);
     }
-    result.map(Some)
+    result
 }
 
 /// Reads the root window into an RGBA clip.
 #[cfg(not(windows))]
 pub(crate) fn grab_desktop() -> Result<ClipContent> {
+    grab_maim(&[])?.ok_or_else(|| AppError::msg("maim did not produce a picture"))
+}
+
+/// Hides the app and returns the pixels the user framed in `maim`'s own selection
+/// overlay, which is the X11 stand-in for the Win32 drag surface.
+#[cfg(not(windows))]
+pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, || grab_maim(&["--select"]))
+}
+
+/// Hides the app, turns the pointer into a crosshair with `xdotool` and returns
+/// the window that was clicked.
+#[cfg(not(windows))]
+pub fn capture_window(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, || {
+        let Some(id) = selected_window()? else {
+            return Ok(None);
+        };
+        grab_maim(&["--window", &id])
+    })
+}
+
+/// Waits for the user to click a window and returns its X11 id.
+///
+/// Escape leaves `xdotool` reporting a failed grab, which is a cancel rather than
+/// a fault.
+#[cfg(not(windows))]
+pub(crate) fn selected_window() -> Result<Option<String>> {
+    let output = std::process::Command::new("xdotool")
+        .arg("selectwindow")
+        .output()
+        .map_err(|e| AppError::msg(format!("xdotool is not available ({e}); install xdotool")))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!id.is_empty()).then_some(id))
+}
+
+/// Runs `maim` with `args` and decodes the PNG it writes.
+///
+/// `Ok(None)` is a cancelled selection: maim removes the file and reports a failed
+/// grab when the user presses Escape.
+#[cfg(not(windows))]
+fn grab_maim(args: &[&str]) -> Result<Option<ClipContent>> {
     let path = std::env::temp_dir().join(format!("kept-shot-{}.png", uuid::Uuid::new_v4()));
     let output = std::process::Command::new("maim")
         // Without this maim super-imposes the pointer onto the picture.
         .arg("--hidecursor")
+        .args(args)
         .arg(&path)
         .output()
         .map_err(|e| AppError::msg(format!("maim is not available ({e}); install maim")))?;
-    let decoded = if output.status.success() {
-        image::open(&path).map(|frame| frame.to_rgba8())
-    } else {
-        Err(image::ImageError::IoError(std::io::Error::other(format!(
-            "maim failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))))
-    };
-    let _ = std::fs::remove_file(&path);
-    let frame = decoded?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&path);
+        let detail = String::from_utf8_lossy(&output.stderr);
+        if path.exists() {
+            return Err(AppError::msg(format!(
+                "maim failed: {}",
+                detail.lines().last().unwrap_or("").trim()
+            )));
+        }
+        log::info!("the screen capture was cancelled: {}", detail.trim());
+        return Ok(None);
+    }
+    decode_png(&path).map(Some)
+}
+
+#[cfg(not(windows))]
+fn decode_png(path: &std::path::Path) -> Result<ClipContent> {
+    let frame = image::open(path).map(|frame| frame.to_rgba8()).map_err(|e| {
+        AppError::msg(format!("could not read the capture from {}: {e}", path.display()))
+    });
+    let _ = std::fs::remove_file(path);
+    let frame = frame?;
     Ok(ClipContent::Image {
         width: frame.width(),
         height: frame.height(),
         rgba: frame.into_raw(),
     })
-}
-
-/// Non-Windows builds have no region picker yet.
-#[cfg(not(windows))]
-pub fn capture_region(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {    Err(AppError::msg(
-        "capturing a screen region is not implemented on this platform yet",
-    ))
 }
 
 #[cfg(not(windows))]
@@ -853,13 +916,6 @@ impl Drop for RecordOutline {
             let _ = win32::DestroyWindow(self.hwnd());
         }
     }
-}
-
-#[cfg(not(windows))]
-pub fn capture_window(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
-    Err(AppError::msg(
-        "capturing a window is only supported on Windows",
-    ))
 }
 
 #[cfg(not(windows))]
