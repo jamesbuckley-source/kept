@@ -335,7 +335,8 @@ impl Session {
     }
 }
 
-/// The arguments for one segment: gdigrab for the pixels, dshow for the device.
+/// The arguments for one segment: the desktop for the pixels, the chosen device
+/// for the sound.
 ///
 /// Kept separate from the process so the shape ffmpeg is handed can be tested.
 pub fn segment_args(request: &RecordRequest, out: &Path) -> Vec<String> {
@@ -346,22 +347,14 @@ pub fn segment_args(request: &RecordRequest, out: &Path) -> Vec<String> {
         "-loglevel".into(),
         "error".into(),
         "-y".into(),
-        "-f".into(),
-        "gdigrab".into(),
-        "-framerate".into(),
-        fps.to_string(),
-        "-draw_mouse".into(),
-        if request.mouse { "1" } else { "0" }.into(),
-        "-offset_x".into(),
-        rect.left.to_string(),
-        "-offset_y".into(),
-        rect.top.to_string(),
-        "-video_size".into(),
-        format!("{}x{}", rect.width(), rect.height()),
-        "-i".into(),
-        "desktop".into(),
     ];
+    args.extend(capture_input(rect, fps, request.mouse));
+    // Only Windows has a device picker to choose from, so only Windows records a
+    // device alongside the desktop.
+    #[cfg(windows)]
     let audio = request.audio.trim();
+    #[cfg(not(windows))]
+    let audio = "";
     if !audio.is_empty() {
         args.extend([
             "-f".into(),
@@ -396,6 +389,51 @@ pub fn segment_args(request: &RecordRequest, out: &Path) -> Vec<String> {
     }
     args.push(out.to_string_lossy().into_owned());
     args
+}
+
+/// The desktop pixels for one segment: gdigrab, which takes the rectangle as
+/// separate flags.
+#[cfg(windows)]
+fn capture_input(rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
+    vec![
+        "-f".into(),
+        "gdigrab".into(),
+        "-framerate".into(),
+        fps.to_string(),
+        "-draw_mouse".into(),
+        if mouse { "1" } else { "0" }.into(),
+        "-offset_x".into(),
+        rect.left.to_string(),
+        "-offset_y".into(),
+        rect.top.to_string(),
+        "-video_size".into(),
+        format!("{}x{}", rect.width(), rect.height()),
+        "-i".into(),
+        "desktop".into(),
+    ]
+}
+
+/// The same pixels from X11: x11grab carries the origin inside the input name
+/// (`:99+100,200`) rather than in flags of its own.
+#[cfg(not(windows))]
+fn capture_input(rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
+    let display = std::env::var("DISPLAY")
+        .ok()
+        .filter(|display| !display.trim().is_empty())
+        .unwrap_or_else(|| ":0".into());
+    vec![
+        "-f".into(),
+        "x11grab".into(),
+        "-framerate".into(),
+        fps.to_string(),
+        "-draw_mouse".into(),
+        if mouse { "1" } else { "0" }.into(),
+        // Odd sizes are already evened out, so this is the frame x11grab produces.
+        "-video_size".into(),
+        format!("{}x{}", rect.width(), rect.height()),
+        "-i".into(),
+        format!("{display}+{},{}", rect.left, rect.top),
+    ]
 }
 
 /// libx264 refuses an odd frame size, so the rectangle loses its last column or
@@ -875,8 +913,16 @@ mod tests {
             Path::new("out.mp4"),
         );
         let joined = args.join(" ");
-        assert!(joined.contains("-f gdigrab"), "{joined}");
-        assert!(joined.contains("-offset_x 100 -offset_y 200"), "{joined}");
+        #[cfg(windows)]
+        {
+            assert!(joined.contains("-f gdigrab"), "{joined}");
+            assert!(joined.contains("-offset_x 100 -offset_y 200"), "{joined}");
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(joined.contains("-f x11grab"), "{joined}");
+            assert!(joined.contains("+100,200"), "{joined}");
+        }
         assert!(joined.contains("-video_size 800x500"), "{joined}");
         assert!(joined.contains("-draw_mouse 1"), "{joined}");
         assert!(!joined.contains("dshow"), "no device was chosen");
@@ -884,6 +930,7 @@ mod tests {
         assert_eq!(args.last().unwrap(), "out.mp4");
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_negative_offset_is_passed_through_for_a_monitor_left_of_the_primary() {
         let args = segment_args(
@@ -895,6 +942,36 @@ mod tests {
         assert!(joined.contains("-draw_mouse 0"), "{joined}");
     }
 
+    /// x11grab spells the origin as part of its input name, so a monitor to the
+    /// left of the primary is `:0+-1920,0`.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_negative_offset_is_carried_in_the_x11_input_name() {
+        let args = segment_args(
+            &request(Rect::new(-1920, 0, 0, 1080), "", false),
+            Path::new("out.mp4"),
+        );
+        let joined = args.join(" ");
+        assert!(joined.contains("+-1920,0"), "{joined}");
+        assert!(joined.contains("-draw_mouse 0"), "{joined}");
+    }
+
+    /// There is no audio device picker off Windows, so a device named in the
+    /// request must not turn into a dshow input ffmpeg cannot open.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_microphone_choice_is_ignored_where_the_picker_does_not_exist() {
+        let args = segment_args(
+            &request(Rect::new(0, 0, 640, 480), "Microphone (Realtek(R) Audio)", true),
+            Path::new("out.mp4"),
+        );
+        let joined = args.join(" ");
+        assert!(!joined.contains("dshow"), "{joined}");
+        assert!(!joined.contains("-c:a"), "{joined}");
+        assert!(joined.contains("-f x11grab"), "{joined}");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_chosen_device_becomes_a_dshow_input() {
         let args = segment_args(
