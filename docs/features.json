@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-21T03:45:41.097Z",
+  "updatedAt": "2026-11-22T23:06:14.060Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3804,6 +3804,22 @@
       "owner": "",
       "references": [],
       "updatedAt": "2026-11-21T03:44:47.601Z"
+    },
+    {
+      "id": "keep-x11-code-out-of-the-macos-build",
+      "title": "Keep the X11 code out of the macOS build",
+      "area": "Window",
+      "status": "backlog",
+      "summary": "`x11rb` and the code that calls it are gated on `cfg(not(windows))`, which includes macOS: the `.app` links the X11 crate, and the countdown circle and `::` popup run X11 connection code that can only fail on a Mac. Gate the dependency and both call sites on `cfg(target_os = \"linux\")` so a macOS build contains no X11 code at all.",
+      "owner": "",
+      "references": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/src/window.rs",
+        "src-tauri/src/autocomplete.rs",
+        "docs/macos-support-plan.md",
+        "https://github.com/jamesbuckley-source/kept/pull/1"
+      ],
+      "updatedAt": "2026-11-22T23:06:14.060Z"
     }
   ]
 }
