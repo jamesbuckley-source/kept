@@ -80,7 +80,7 @@ docker compose -f docker/compose.yaml down -v
 ## Where the Linux port stands
 
 `cargo check --all-targets` is green, `cargo test --lib` is **454 passing, 0
-failing** on Linux (477 on Windows), and the packaged app opens on the container
+failing** on Linux (475 on Windows), and the packaged app opens on the container
 desktop — setup wizard, SQLite migrations, global shortcuts and the tray all come
 up. Every feature in the table below was exercised through the app's own interface
 inside the container.

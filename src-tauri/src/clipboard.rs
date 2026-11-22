@@ -744,6 +744,7 @@ fn set_selection(target: &str, contents: &str) -> Result<()> {
 }
 
 /// A local path spelled as the `file://` URI a `text/uri-list` carries.
+#[cfg(not(windows))]
 fn file_uri(path: &str) -> String {
     let mut uri = String::from("file://");
     for byte in path.bytes() {
@@ -758,6 +759,7 @@ fn file_uri(path: &str) -> String {
 }
 
 /// The local paths a `text/uri-list` names, ignoring blank lines and comments.
+#[cfg(not(windows))]
 fn parse_uri_list(listing: &str) -> Vec<String> {
     listing
         .lines()
@@ -770,6 +772,7 @@ fn parse_uri_list(listing: &str) -> Vec<String> {
 }
 
 /// Undoes the `%XX` escapes in a URI, leaving anything unescaped as written.
+#[cfg(not(windows))]
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -1666,6 +1669,7 @@ mod tests {
         assert_eq!(payload.len(), 22, "header plus the list terminator");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_path_becomes_a_percent_escaped_file_uri() {
         assert_eq!(file_uri("/tmp/plain.mp4"), "file:///tmp/plain.mp4");
@@ -1677,6 +1681,7 @@ mod tests {
         assert_eq!(file_uri("/tmp/a#b?c"), "file:///tmp/a%23b%3Fc");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_uri_list_reads_back_as_the_paths_it_names() {
         let listing = "# copied from Kept\r\nfile:///tmp/one.png\r\nfile:///tmp/two%20words.pdf\r\n";
