@@ -71,6 +71,58 @@ jobs:
           # what the bundle got instead of failing when it is unsigned.
           codesign -dv "$app" 2>&1 | head -n 5 || true
 
+      # The runner is logged in on a real 1024x768 desktop, so the app can be
+      # launched and photographed even though nobody can watch it. Nobody can
+      # click it either: every interaction from here is AppleScript.
+      - name: Launch the app on the runner's desktop
+        run: |
+          mkdir -p gui
+          open -a "$PWD/src-tauri/target/release/bundle/macos/Kept.app"
+          for _ in $(seq 1 30); do
+            pgrep -f "MacOS/kept" >/dev/null && break
+            sleep 1
+          done
+          sleep 6
+          if ! pgrep -fl "MacOS/kept"; then
+            echo "Kept did not stay running"
+            exit 1
+          fi
+          screencapture -x gui/01-launch.png
+          osascript -e 'tell application "System Events" to get name of every process whose visible is true'
+
+      # Alt+V is the Windows default summon key; on macOS it is Option+V, and
+      # the shortcut plugin has to have registered it for this to show anything.
+      - name: Try the summon hotkey
+        run: |
+          osascript -e 'tell application "System Events" to key code 9 using option down' || true
+          sleep 3
+          screencapture -x gui/02-hotkey.png
+
+      # A Mac has no console for this process, so the log file is the only thing
+      # that explains a crash or a refused permission.
+      - name: Collect the app log
+        if: always()
+        run: |
+          logdir="$HOME/Library/Logs/ikept.it"
+          mkdir -p app-log
+          cp -R "$logdir/." app-log/ 2>/dev/null || echo "no log directory at $logdir"
+          ls -la app-log
+          tail -n 80 app-log/*.log 2>/dev/null || true
+
+      - name: Quit the app
+        if: always()
+        run: osascript -e 'tell application "System Events" to tell process "Kept" to keystroke "q" using command down' || pkill -f "MacOS/kept" || true
+
+      - name: Upload the GUI screenshots and log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Kept-macos-gui
+          path: |
+            gui
+            app-log
+          if-no-files-found: warn
+
       - name: Upload the app bundle
         uses: actions/upload-artifact@v7
         with:
