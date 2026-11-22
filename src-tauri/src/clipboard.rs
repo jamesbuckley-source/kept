@@ -620,12 +620,10 @@ pub fn write_flavoured(
     if let ClipContent::Files(paths) = content {
         return write_files(paths);
     }
-    let mut clip = arboard::Clipboard::new()
-        .map_err(|e| AppError::Clipboard(format!("could not open the clipboard: {e}")))?;
-    match content {
+    with_owner(|clip| match content {
         ClipContent::Text(text) => clip
             .set_text(text.clone())
-            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+            .map_err(|e| AppError::Clipboard(e.to_string())),
         ClipContent::Image {
             width,
             height,
@@ -636,10 +634,33 @@ pub fn write_flavoured(
                 height: *height as usize,
                 bytes: std::borrow::Cow::Borrowed(rgba.as_slice()),
             })
-            .map_err(|e| AppError::Clipboard(e.to_string()))?,
+            .map_err(|e| AppError::Clipboard(e.to_string())),
         ClipContent::Files(_) => unreachable!("handled above"),
-    }
+    })?;
     Ok(hashing::of_content(content))
+}
+
+/// The clipboard context that owns what Kept copied, for the life of the process.
+///
+/// X11 has no clipboard daemon by default: a selection belongs to the process that
+/// set it until that connection goes away. Dropping an `arboard::Clipboard` right
+/// after `set_text` therefore releases the selection, and the clipboard reads as
+/// empty a moment later — which is what made "copy, then paste" paste nothing and
+/// made the clipboard warn that no manager took the contents over.
+#[cfg(not(windows))]
+static OWNER: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
+
+#[cfg(not(windows))]
+fn with_owner<T>(write: impl FnOnce(&mut arboard::Clipboard) -> Result<T>) -> Result<T> {
+    let mut slot = OWNER.lock();
+    if slot.is_none() {
+        *slot = Some(
+            arboard::Clipboard::new()
+                .map_err(|e| AppError::Clipboard(format!("could not open the clipboard: {e}")))?,
+        );
+    }
+    let clip = slot.as_mut().expect("filled just above");
+    write(clip)
 }
 
 #[cfg(windows)]
@@ -809,7 +830,13 @@ pub fn clear() -> Result<()> {
     }
     #[cfg(not(windows))]
     {
-        Ok(())
+        // X11 cannot be emptied the way `EmptyClipboard` does it: a selection has
+        // to be owned by someone. An empty string is the closest thing to "there is
+        // nothing to paste", and the owner Kept already holds can serve it.
+        with_owner(|clip| {
+            clip.set_text(String::new())
+                .map_err(|e| AppError::Clipboard(format!("could not clear the clipboard: {e}")))
+        })
     }
 }
 
