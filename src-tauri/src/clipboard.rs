@@ -717,29 +717,30 @@ pub fn write_files(paths: &[String]) -> Result<String> {
 fn set_selection(target: &str, contents: &str) -> Result<()> {
     use std::io::Write as _;
 
+    // Both ends are discarded: `xclip` forks into the background to serve the
+    // selection, and a forked child holding our pipes would keep them open, so a
+    // read of them would never see the end of the data.
     let mut child = std::process::Command::new("xclip")
         .args(["-selection", "clipboard", "-t", target, "-i"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| AppError::Clipboard(format!("xclip is not available ({e}); install xclip")))?;
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(e) = stdin.write_all(contents.as_bytes())
-    {
-        return Err(AppError::Clipboard(format!("xclip took no data: {e}")));
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(contents.as_bytes())
+            .map_err(|e| AppError::Clipboard(format!("xclip took no data: {e}")))?;
     }
-    // xclip forks to keep serving the selection, so its parent exiting is success.
-    let output = child
-        .wait_with_output()
-        .map_err(|e| AppError::Clipboard(format!("xclip did not finish: {e}")))?;
-    if !output.status.success() {
-        return Err(AppError::Clipboard(format!(
-            "xclip failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+    // The process that read the data is the one that exits; the copy it left
+    // behind is what answers the next paste.
+    match child.wait() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(AppError::Clipboard(format!(
+            "xclip could not publish the file list ({status})"
+        ))),
+        Err(e) => Err(AppError::Clipboard(format!("xclip did not finish: {e}"))),
     }
-    Ok(())
 }
 
 /// A local path spelled as the `file://` URI a `text/uri-list` carries.
@@ -1371,6 +1372,16 @@ pub fn sequence_number() -> u32 {
     if let Some(text) = read_text() {
         return fold(0x811c_9dc5, text.as_bytes());
     }
+    // A file list offers no text, so it is asked for only when nothing else was
+    // there: reading it costs an `xclip` call, which a text copy must not pay.
+    if let Some(paths) = read_file_list() {
+        let mut seed = 0x811c_9dc5;
+        for path in paths {
+            seed = fold(seed, path.as_bytes());
+            seed = fold(seed, b"\n");
+        }
+        return seed;
+    }
     match read_image() {
         Some(ClipContent::Image {
             width,
@@ -1677,6 +1688,53 @@ mod tests {
         assert!(parse_uri_list("").is_empty());
         // A remote URI is not a local path, so it is left out rather than mangled.
         assert!(parse_uri_list("https://example.com/x.png").is_empty());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    #[ignore = "writes to the live X clipboard; run with DISPLAY set"]
+    fn a_file_list_round_trips_through_the_x11_clipboard() {
+        // `xclip` reads its data from a file descriptor and then stays resident to
+        // serve the selection, so it is not waited on: only the data it published
+        // is what this test is about.
+        let listing = std::env::temp_dir().join("kept-uri-list.txt");
+        let contents = "file:///tmp/kept-uri-list-one.txt\r\nfile:///tmp/kept%20two.txt\r\n";
+        if std::fs::write(&listing, contents).is_err() {
+            return;
+        }
+        let Ok(handle) = std::fs::File::open(&listing) else {
+            return;
+        };
+        let mut writer = match std::process::Command::new("xclip")
+            .args(["-selection", "clipboard", "-t", "text/uri-list", "-i"])
+            .stdin(std::process::Stdio::from(handle))
+            // The copy `xclip` forks to serve the selection would otherwise hold
+            // the test's own pipes open.
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            // No xclip on this machine, so there is nothing to test.
+            Err(_) => return,
+        };
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            if read_file_list().is_some() {
+                break;
+            }
+        }
+        let _ = writer.kill();
+        let _ = std::fs::remove_file(&listing);
+
+        assert_eq!(
+            read_file_list(),
+            Some(vec![
+                "/tmp/kept-uri-list-one.txt".to_string(),
+                "/tmp/kept two.txt".to_string(),
+            ]),
+            "the file list a copy publishes has to be the one the watcher reads"
+        );
     }
 
     #[cfg(windows)]
