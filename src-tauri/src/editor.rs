@@ -43,8 +43,12 @@ pub fn program_of(editor: &str) -> Option<PathBuf> {
     split_editor_command(editor).first().map(PathBuf::from)
 }
 
-/// The name KeptCraft's installer gives its program.
+/// The name KeptCraft's installer gives its program. Only Windows spells it with
+/// an extension; elsewhere the PATH entry is the bare name.
+#[cfg(windows)]
 const KEPTCRAFT_EXE: &str = "keptcraft.exe";
+#[cfg(not(windows))]
+const KEPTCRAFT_EXE: &str = "keptcraft";
 
 /// The command line that opens `file` in KeptCraft's annotation editor, in the
 /// form Kept's setting holds.

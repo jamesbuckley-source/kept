@@ -137,9 +137,19 @@ fn service_for(path: &Path, dropbox_roots: &[PathBuf]) -> Option<&'static str> {
 /// Dropbox.
 fn dropbox_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
+    // The client records its sync roots next to its own settings: `Dropbox\info.json`
+    // under the roaming folders on Windows, `.dropbox/info.json` under the home
+    // folder everywhere else.
+    let mut listings: Vec<PathBuf> = Vec::new();
     for base in [std::env::var_os("LOCALAPPDATA"), std::env::var_os("APPDATA")] {
-        let Some(base) = base else { continue };
-        let info = PathBuf::from(base).join("Dropbox").join("info.json");
+        if let Some(base) = base {
+            listings.push(PathBuf::from(base).join("Dropbox").join("info.json"));
+        }
+    }
+    if let Some(home) = home_dir() {
+        listings.push(home.join(".dropbox").join("info.json"));
+    }
+    for info in listings {
         let Ok(raw) = std::fs::read_to_string(&info) else {
             continue;
         };
@@ -156,13 +166,21 @@ fn dropbox_roots() -> Vec<PathBuf> {
         }
     }
     // The client's default folder, for a machine whose info.json has gone.
-    if let Some(home) = std::env::var_os("USERPROFILE") {
-        let fallback = PathBuf::from(home).join("Dropbox");
+    if let Some(home) = home_dir() {
+        let fallback = home.join("Dropbox");
         if fallback.is_dir() && !roots.iter().any(|root| *root == fallback) {
             roots.push(fallback);
         }
     }
     roots
+}
+
+/// The folder a desktop user's files live in, whichever platform spells it that way.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Removes the files left behind by a completed move. Runs at startup, after the
@@ -344,8 +362,34 @@ mod tests {
         }
     }
 
-    /// Cloud-folder detection is driven by Windows paths; the Linux one is not
-    /// written yet.
+    /// Cloud-folder detection is driven by the paths each client uses, which differ
+    /// only in spelling, so the same rule is checked with the X11 shape too.
+    /// The same rule with the paths a Linux user has: Dropbox's roots come from
+    /// `~/.dropbox/info.json`, and the Drive client mounts a folder called
+    /// `My Drive`.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_sync_folder_is_named_on_x11_too() {
+        let roots = [PathBuf::from("/home/me/Dropbox")];
+        assert_eq!(
+            service_for(Path::new("/home/me/Dropbox/Kept"), &roots),
+            Some("Dropbox")
+        );
+        assert_eq!(
+            service_for(Path::new("/run/user/1000/gvfs/My Drive/Kept"), &roots),
+            Some("Google Drive")
+        );
+        assert_eq!(
+            service_for(Path::new("/home/me/Google Drive/Kept"), &roots),
+            Some("Google Drive")
+        );
+        assert_eq!(
+            service_for(Path::new("/home/me/.local/share/ikept.it"), &roots),
+            None,
+            "an ordinary folder is not a sync folder"
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_sync_folder_is_named_and_a_plain_one_is_not() {

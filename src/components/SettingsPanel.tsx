@@ -2089,7 +2089,7 @@ export function SettingsPanel({
             />
             <Row
               label="Print Screen"
-              hint="Captures the default type above. Windows gives the key to the Snipping Tool, so turning this on switches that off first; turning it off puts it back exactly as it was."
+              hint="Captures the default type above. On Windows the key belongs to the Snipping Tool, so turning this on takes it off that first and puts it back when switched off."
               control={
                 <Toggle
                   label="Print Screen captures"
