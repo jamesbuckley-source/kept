@@ -1,0 +1,54 @@
+name: macOS GUI probe
+
+# Throwaway: finds out what a GitHub-hosted macOS runner can see and drive.
+on:
+  push:
+    paths:
+      - .github/workflows/macos-gui-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Describe the display session
+        run: |
+          echo "console user: $(stat -f %Su /dev/console)"
+          echo "logged-in: $(who)"
+          system_profiler SPDisplaysDataType | head -n 20
+
+      - name: Open a window
+        run: |
+          printf 'KEPT GUI PROBE\n%s\n' "$(date)" > /tmp/probe.txt
+          open -a TextEdit /tmp/probe.txt
+          sleep 8
+          pgrep -fl TextEdit || echo "no TextEdit process"
+
+      - name: Screenshot
+        run: |
+          set +e
+          screencapture -x /tmp/shot.png
+          echo "screencapture exit: $?"
+          ls -l /tmp/shot.png
+          file /tmp/shot.png
+
+      - name: Accessibility scripting
+        run: |
+          set +e
+          echo "--- read the window list ---"
+          osascript -e 'tell application "System Events" to get name of every process whose visible is true' 2>&1 | head -n 3
+          echo "exit: $?"
+          echo "--- type a keystroke ---"
+          osascript -e 'tell application "System Events" to keystroke "kept"' 2>&1 | head -n 3
+          echo "exit: $?"
+
+      - name: Upload the screenshot
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-gui-probe
+          path: /tmp/shot.png
+          if-no-files-found: warn
