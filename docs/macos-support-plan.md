@@ -1,7 +1,10 @@
 # Kept on macOS — plan
 
-Status: **planned, not started.** Nothing has been implemented yet.
-Written 2026-10-21 against version 0.13.6.
+Status: **in progress.** The Mac build now compiles, bundles, launches and is
+photographed on every pull request, and it runs on a MacinCloud Mac (macOS 26,
+arm64) that `scripts/mac-dev.ps1` rebuilds from this checkout on save. What is
+still inert on macOS: clipboard capture and write, auto-paste, OCR, the capture
+suite, sounds, and the `::` popup. Written 2026-10-21 against version 0.13.6.
 
 ## Decisions taken
 
