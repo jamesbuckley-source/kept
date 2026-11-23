@@ -131,6 +131,17 @@ fn file_objects(paths: &[String]) -> Retained<NSArray<ProtocolObject<dyn NSPaste
     NSArray::from_retained_slice(&urls)
 }
 
+/// The process id of the app in front, which is what auto-paste reactivates.
+///
+/// macOS has no window handle to remember: reactivating the application brings
+/// back whichever window it was showing, and a synthesised keystroke goes to
+/// whatever is frontmost when it arrives.
+pub fn frontmost_pid() -> Option<i32> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let app = workspace.frontmostApplication()?;
+    Some(app.processIdentifier())
+}
+
 /// The bundle identifier of the app in front, which is what the ignore-list is
 /// matched against. Falls back to the display name for anything unsigned.
 pub fn frontmost_app() -> Option<String> {

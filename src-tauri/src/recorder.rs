@@ -29,6 +29,7 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(8);
 /// Poll interval while waiting for that.
 const STOP_POLL: Duration = Duration::from_millis(40);
 /// The audio device a winget install of FFmpeg is looked for under.
+#[cfg(windows)]
 const WINGET_PREFIX: &str = "gyan.ffmpeg";
 
 /// One recording request, already resolved to a rectangle on the desktop.
@@ -126,6 +127,12 @@ impl Recorder {
         }
         if request.rect.is_empty() {
             return Err(AppError::msg("there is nothing on screen to record"));
+        }
+        // AVFoundation waits for frames that a missing grant never delivers, so a
+        // recording started without it looks like it is running and saves nothing.
+        #[cfg(target_os = "macos")]
+        if !crate::macos_permissions::screen_recording_granted() {
+            return Err(crate::macos_permissions::screen_recording_denied());
         }
         let folder = std::env::temp_dir().join(format!(
             "kept-record-{}",
@@ -415,7 +422,7 @@ fn capture_input(rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
 
 /// The same pixels from X11: x11grab carries the origin inside the input name
 /// (`:99+100,200`) rather than in flags of its own.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn capture_input(rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
     let display = std::env::var("DISPLAY")
         .ok()
@@ -433,6 +440,32 @@ fn capture_input(rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
         format!("{}x{}", rect.width(), rect.height()),
         "-i".into(),
         format!("{display}+{},{}", rect.left, rect.top),
+    ]
+}
+
+/// The desktop pixels on macOS: AVFoundation's screen device, which is named
+/// rather than indexed so a machine with more than one camera cannot shift it.
+///
+/// The device records a whole screen and has no rectangle of its own, which is why
+/// region and window recording are refused on macOS for now; the rectangle this
+/// receives is the desktop, and its size is the screen's own.
+#[cfg(target_os = "macos")]
+fn capture_input(_rect: Rect, fps: u32, mouse: bool) -> Vec<String> {
+    vec![
+        "-f".into(),
+        "avfoundation".into(),
+        "-framerate".into(),
+        fps.to_string(),
+        // The device's own default is yuv420p, which a screen input does not
+        // support: the capture is asked for uyvy422 and the encoder converts.
+        "-pixel_format".into(),
+        "uyvy422".into(),
+        "-capture_cursor".into(),
+        if mouse { "1" } else { "0" }.into(),
+        // `none` is the audio half of the input string: there is no audio source
+        // in the device picker on macOS yet.
+        "-i".into(),
+        "Capture screen 0:none".into(),
     ]
 }
 
@@ -687,15 +720,18 @@ pub fn file_into_place(from: &Path, to: &Path) -> Result<()> {
 /// The ffmpeg this app will use, if there is one.
 ///
 /// A configured path wins; otherwise `ffmpeg` is taken from `PATH`, and finally
-/// from the folder a winget install leaves it in, which is not on `PATH` until the
-/// next sign-in.
+/// from the place an installer leaves it that `PATH` does not name: winget's
+/// per-user folder on Windows, Homebrew's two prefixes on macOS.
 pub fn ffmpeg_path(settings: &Settings) -> Option<PathBuf> {
     let configured = settings.record_ffmpeg_path.trim();
     if !configured.is_empty() {
         let path = PathBuf::from(configured);
         return path.is_file().then_some(path);
     }
-    probe_ffmpeg().or_else(winget_ffmpeg)
+    #[cfg(windows)]
+    return probe_ffmpeg().or_else(winget_ffmpeg);
+    #[cfg(not(windows))]
+    probe_ffmpeg()
 }
 
 fn probe_ffmpeg() -> Option<PathBuf> {
@@ -706,9 +742,31 @@ fn probe_ffmpeg() -> Option<PathBuf> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     hide_console(&mut command);
-    command.status().ok()?.success().then(|| PathBuf::from("ffmpeg"))
+    if command.status().ok()?.success() {
+        return Some(PathBuf::from("ffmpeg"));
+    }
+    // A GUI app inherits launchd's PATH, which has no Homebrew bin in it, so the
+    // two prefixes Homebrew installs into are checked directly, along with the
+    // per-user bin a downloaded build is usually unpacked into.
+    #[cfg(target_os = "macos")]
+    {
+        let mut candidates = vec![
+            PathBuf::from("/opt/homebrew/bin/ffmpeg"),
+            PathBuf::from("/usr/local/bin/ffmpeg"),
+        ];
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(PathBuf::from(home).join(".local/bin/ffmpeg"));
+        }
+        if let Some(found) = candidates.into_iter().find(|path| path.is_file()) {
+            return Some(found);
+        }
+    }
+    None
 }
 
+/// Where a winget install leaves ffmpeg, which `PATH` does not name until the next
+/// sign-in.
+#[cfg(windows)]
 fn winget_ffmpeg() -> Option<PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")?;
     let packages = PathBuf::from(base)
@@ -732,6 +790,7 @@ fn winget_ffmpeg() -> Option<PathBuf> {
 
 /// Installs FFmpeg with winget, for the machines that have neither a copy on
 /// `PATH` nor a configured one.
+#[cfg(windows)]
 pub fn install_ffmpeg() -> Result<String> {
     let mut command = Command::new("winget");
     command
@@ -767,7 +826,19 @@ pub fn install_ffmpeg() -> Result<String> {
     Ok(first_line(&text))
 }
 
+/// There is no installer this app can run on macOS, so the answer says what to do
+/// instead of pretending to try.
+#[cfg(target_os = "macos")]
+pub fn install_ffmpeg() -> Result<String> {
+    Err(AppError::msg(
+        "Screen recording needs FFmpeg, which has to be installed from Terminal on \
+         macOS: `brew install ffmpeg` (or a build from ffmpeg.org). If it is \
+         installed somewhere else, set its path in Settings → Screen recording.",
+    ))
+}
+
 /// The audio devices a DirectShow capture can be started with.
+#[cfg(windows)]
 pub fn audio_devices(ffmpeg: &Path) -> Vec<String> {
     let mut command = Command::new(ffmpeg);
     command
@@ -782,6 +853,19 @@ pub fn audio_devices(ffmpeg: &Path) -> Vec<String> {
     parse_devices(&String::from_utf8_lossy(&output.stderr))
 }
 
+/// The macOS recorder takes no audio source yet: the bar's device picker is
+/// DirectShow's, and AVFoundation names its inputs differently.
+#[cfg(target_os = "macos")]
+pub fn audio_devices(_ffmpeg: &Path) -> Vec<String> {
+    Vec::new()
+}
+
+/// X11 recordings are silent, for the same reason.
+#[cfg(target_os = "linux")]
+pub fn audio_devices(_ffmpeg: &Path) -> Vec<String> {
+    Vec::new()
+}
+
 /// Pulls the audio device names out of `-list_devices` output.
 ///
 /// Two shapes have to be understood. FFmpeg up to 8 grouped the list under
@@ -789,6 +873,7 @@ pub fn audio_devices(ffmpeg: &Path) -> Vec<String> {
 /// prints one flat list and tags each line `(audio)`, `(video)` or `(none)`
 /// instead. The tag wins when it is there, and the section decides when it is not,
 /// so one parser serves both.
+#[cfg(windows)]
 pub fn parse_devices(text: &str) -> Vec<String> {
     let mut devices: Vec<String> = Vec::new();
     let mut in_audio_section = false;
@@ -821,6 +906,7 @@ pub fn parse_devices(text: &str) -> Vec<String> {
     devices
 }
 
+#[cfg(windows)]
 fn quoted(line: &str) -> Option<String> {
     let start = line.find('"')? + 1;
     let end = line[start..].find('"')? + start;
@@ -917,14 +1003,28 @@ mod tests {
         {
             assert!(joined.contains("-f gdigrab"), "{joined}");
             assert!(joined.contains("-offset_x 100 -offset_y 200"), "{joined}");
+            assert!(joined.contains("-video_size 800x500"), "{joined}");
+            assert!(joined.contains("-draw_mouse 1"), "{joined}");
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
         {
             assert!(joined.contains("-f x11grab"), "{joined}");
             assert!(joined.contains("+100,200"), "{joined}");
+            assert!(joined.contains("-video_size 800x500"), "{joined}");
+            assert!(joined.contains("-draw_mouse 1"), "{joined}");
         }
-        assert!(joined.contains("-video_size 800x500"), "{joined}");
-        assert!(joined.contains("-draw_mouse 1"), "{joined}");
+        // The screen device records a whole screen and takes no rectangle, so the
+        // only thing the request can say about it is whether the pointer is drawn.
+        #[cfg(target_os = "macos")]
+        {
+            assert!(joined.contains("-f avfoundation"), "{joined}");
+            assert!(joined.contains("-capture_cursor 1"), "{joined}");
+            // The screen device rejects the demuxer's default yuv420p, so the
+            // capture format has to be named.
+            assert!(joined.contains("-pixel_format uyvy422"), "{joined}");
+            assert!(joined.contains("-i Capture screen 0:none"), "{joined}");
+            assert!(!joined.contains("-video_size"), "{joined}");
+        }
         assert!(!joined.contains("dshow"), "no device was chosen");
         assert!(!joined.contains("-c:a"), "silent video needs no audio codec");
         assert_eq!(args.last().unwrap(), "out.mp4");
@@ -944,7 +1044,7 @@ mod tests {
 
     /// x11grab spells the origin as part of its input name, so a monitor to the
     /// left of the primary is `:0+-1920,0`.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_negative_offset_is_carried_in_the_x11_input_name() {
         let args = segment_args(
@@ -968,7 +1068,10 @@ mod tests {
         let joined = args.join(" ");
         assert!(!joined.contains("dshow"), "{joined}");
         assert!(!joined.contains("-c:a"), "{joined}");
-        assert!(joined.contains("-f x11grab"), "{joined}");
+        assert!(
+            joined.contains("-f x11grab") || joined.contains("-f avfoundation"),
+            "{joined}"
+        );
     }
 
     #[cfg(windows)]
@@ -1000,9 +1103,15 @@ mod tests {
             &request(Rect::new(10, 10, 645, 481), "", true),
             Path::new("out.mp4"),
         );
+        // AVFoundation's screen device does its own sizing, so there is no size to
+        // check there; the rectangle is still evened out for the other platforms.
+        #[cfg(not(target_os = "macos"))]
         assert!(args.join(" ").contains("-video_size 634x470"));
+        #[cfg(target_os = "macos")]
+        let _ = args;
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_device_list_splits_audio_from_video() {
         let text = r#"
@@ -1022,6 +1131,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn ffmpeg_nine_tags_each_device_instead_of_grouping_them() {
         // Verbatim from FFmpeg 9.0.2, which prints no section headers at all: the
@@ -1048,6 +1158,7 @@ Error opening input file dummy.
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_list_with_no_audio_section_offers_nothing() {
         assert!(parse_devices("[dshow @ 000] DirectShow video devices").is_empty());

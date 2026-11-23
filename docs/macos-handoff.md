@@ -4,7 +4,8 @@ Working notes for whoever picks this up. The phase plan is
 [macos-support-plan.md](./macos-support-plan.md); this file records where the work
 actually stands, how to run it, and what is left.
 
-Branch: `agents/i-want-to-develop-the-mac-version-of` (PR #1).
+Branch: merged into `main` from `agents/i-want-to-develop-the-mac-version-of`
+(PR #1) and `agents/macos-onscreen-ruler-port`.
 Last updated 2026-11-23.
 
 ## Where it runs
@@ -13,7 +14,7 @@ Last updated 2026-11-23.
 |---|---|
 | Test Mac | MacinCloud `NY702.macincloud.com`, user `user956782`, macOS 26.2, arm64, 8 cores / 16 GB |
 | SSH | `ssh -i ~/.ssh/kept_macincloud_ed25519 user956782@NY702.macincloud.com` (key-only; the Mac password is not needed) |
-| Repo on the Mac | `~/kept`, a shallow clone of the branch |
+| Repo on the Mac | `~/kept`, a shallow clone of the branch, kept at the branch tip (`git fetch --depth 1 origin <branch> && git reset --hard FETCH_HEAD`) so a file the dev loop has not copied yet is never a stale *branch* as well as a stale copy |
 | Toolchain there | Node 22 in `~/.local/node`, cargo in `~/.cargo`, full Xcode, no Homebrew |
 | Rebuild loop | `pwsh ./scripts/mac-dev.ps1` from the Windows checkout: copies changed files, builds the debug bundle, reopens it. `-Once` for a single pass |
 | CI | `.github/workflows/ci.yml` on `macos-latest`: tests, bundles, launches the app, screenshots it, uploads `Kept-macos-gui` |
@@ -36,34 +37,31 @@ the CI artifact is the only view.
 | Shortcut labels | `src/lib/platform.ts` drives the hints; Print Screen rows are hidden on a Mac |
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
-| Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
+| Permissions in the UI | The wizard's "Paste & privacy" step and a "macOS permissions" section in Settings both show the two grants, whether they are held, and an Allow button that raises the system prompt (Screen Recording's own dialog, Accessibility's `AXIsProcessTrustedWithOptions` dialog) or opens the right pane when the dialog has already been answered |
+| Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; Settings and the wizard have an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it. **Not yet run on a granted Mac** — the path is compiled, unit-tested and refusal-tested |
+| Colour picker | **Implemented** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored. The conversion is tested headlessly with AppKit colours; the magnifier itself has not been clicked through |
+| OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download. Verified end to end on the Mac: a copied PNG came back from the running app's history with `ocr_text = "CopyPaste OCR 2026"`, and the fixture test reads the same text |
+| Auto-paste | **Implemented** — the frontmost application's process id is remembered, reactivated with `NSRunningApplication`, and ⌘V is posted with `CGEventPost`. Gated on the Accessibility grant (asked for with the system dialog on the first paste) and fails with the pane to open. Not yet run with the grant in place |
+| Screen recording | **Implemented for the whole screen** — `-f avfoundation`, `-pixel_format uyvy422` (the device rejects the demuxer's yuv420p default; `-list_devices` on the Mac names it `Capture screen 0`), `-capture_cursor` from the bar. The Screen Recording grant is checked at start, because AVFoundation otherwise waits forever for frames that never arrive. FFmpeg is found on `PATH`, in Homebrew's two prefixes or `~/.local/bin` — the test Mac has a static 6.0 build at `~/.local/bin/ffmpeg`. There is no installer to run on macOS, so the bar and Settings say `brew install ffmpeg` and offer Re-check. A recording has not been made with the grant in place; region and window recording are still refused |
+| Dock / app icon | **Current** — regenerated from `design/app-icon.svg` (the `mark-only.svg` mark on a macOS squircle) with `npm run tauri icon`; the `.icns` in the bundle was the old cyan/amber logo |
+| Screen ruler | **Implemented** — `ruler.rs`'s `macos` module opens `index.html?window=ruler` as a transparent, always-on-top, undecorated webview on every Space, covering the display work area (`macOS` keeps a window out from under the menu bar, so the overlay draws in `1920×996` at origin `0×31` on the 1x test display). `src/components/RulerOverlay.tsx` paints the same tools, snapping and keys as the Windows GDI ruler and asks the tested helpers for every string; lock is click-through with Esc taken globally, Copy writes to the clipboard and history. Bundle builds and launches on the Mac and `ruler_setup` answers from the running app, but the overlay's look, the 200 px drag, Esc and the lock have not been checked through the UI yet (SSH has neither TCC grant) |
 
-Code lives in `src-tauri/src/macos_clipboard.rs` plus the `#[cfg(target_os = "macos")]`
-sections of `clipboard.rs` and `sound.rs`. Everything else still falls through to
-the **Linux** implementation, which is why the log shows `maim`, `xdotool` and
-`tesseract` errors.
+Code lives in `src-tauri/src/macos_clipboard.rs`, `macos_capture.rs` and
+`macos_permissions.rs`, plus the `#[cfg(target_os = "macos")]` sections of
+`clipboard.rs`, `capture.rs`, `picker.rs`, `paste.rs`, `ocr.rs` and `sound.rs`.
+What is left of the Linux paths — `maim`, `xdotool`, `tesseract` — is gated to
+`target_os = "linux"` and no longer runs on a Mac.
 
 ## Not done — in the order worth doing
 
-1. **Colour picker** (`picker.rs`). `screencapture` sampling or `NSColorSampler`.
-2. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
-   Mac. Vision's `VNRecognizeTextRequest` (objc2-vision) is offline and needs no
-   permission; `cargo test` covers the pure parts only.
-3. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
-   reactivating the previous `NSRunningApplication`, gated on the Accessibility
-   TCC grant.
-4. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
-   existing "install ffmpeg" flow plus `-f avfoundation` input is the port.
-   Region and window recording are still refused on macOS (`choose_region`,
-   `choose_window`): ffmpeg records a screen, not a rectangle, until a selector
-   reports one.
-5. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
+1. **Region and window recording** (`capture.rs::choose_region`/`choose_window`)
+   are refused on macOS: ffmpeg's AVFoundation screen device records a whole
+   screen, so a rectangle needs a selector that reports one first.
+2. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
    it needs a window rectangle and a way to wheel it.
-6. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
+3. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
    no non-grabbing key recorder yet. It records the token and installs no hook.
-7. **Dock / app icon.** The `.icns` is older artwork than the current logo;
-   regenerate with `npm run tauri icon <source.png>`.
-8. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
+4. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
    on macOS (`window::set_taskbar_visibility` is a no-op there today).
 
 ## How to verify a change
@@ -75,12 +73,30 @@ ssh -i "$HOME/.ssh/kept_macincloud_ed25519" user956782@NY702.macincloud.com `
   'tail -n 20 ~/Library/Logs/ikept.it/Kept.log'
 ```
 
+The log line `macOS permissions: screen recording …, accessibility …` on every
+start says whether the two grants are held, which is the first thing to look at
+when a screenshot or a paste does nothing.
+
+Two things cannot be checked over SSH and need hands on the Mac: the two TCC
+grants (System Settings → Privacy & Security, or the wizard's Allow buttons) and
+therefore anything that reads the screen — `screencapture` from `sshd` fails with
+"could not create image from display", and ffmpeg's AVFoundation input simply
+waits for frames that never arrive.
+
 Clipboard checks that need no GUI:
 
 ```sh
 DB="$HOME/Library/Application Support/ikept.it/copypaste.db"
 printf 'some text' | pbcopy; sleep 1
 sqlite3 "$DB" "select id, kind, char_count, html is not null, rtf is not null from clips order by id desc limit 3;"
+```
+
+An image copy, which also exercises OCR end to end:
+
+```sh
+osascript -e 'set the clipboard to (read (POSIX file "/tmp/ocr-sample.png") as «class PNGf»)'
+sleep 4
+sqlite3 -header "$DB" "select id, kind, substr(preview,1,20), substr(ocr_text,1,40) from clips order by id desc limit 1;"
 ```
 
 Rich text needs a real pasteboard write; a two-line Swift script against AppKit
@@ -95,6 +111,10 @@ browser in the RDP session.
 - `open` over SSH fails with `RBSRequestErrorDomain Code=5` while the console
   belongs to another user (the MacinCloud box has three). `who -u` says whose
   session is on the console; retry when it is `user956782` again.
+- The Mac's `~/kept` was found reverted to its old checkout more than once
+  (`Cargo.toml` lost its macOS dependencies while the sources beside it stayed
+  new). The clone is now reset to the branch tip, so a reset costs nothing that
+  the push has not already carried.
 - `ssh-keygen -N '""'` in PowerShell stores the literal characters `""` as the
   passphrase, and the client then never signs with the key even though the server
   says `Server accepts key`.

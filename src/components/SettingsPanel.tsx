@@ -17,6 +17,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { formatBytes, formatCount, formatRelative } from "../lib/format";
 import { isMac } from "../lib/platform";
+import { Row } from "./SettingsRow";
 import {
   errorMessage,
   copyText,
@@ -44,6 +45,7 @@ import {
 import type { UpdateState } from "../hooks/useUpdater";
 import { CaptureModeField } from "./CaptureModeField";
 import { KeptMark } from "./KeptMark";
+import { PermissionGrants } from "./PermissionGrants";
 import { ReleaseNotesFrame } from "./ReleaseNotesFrame";
 import { IconChevronRight, IconClose, IconSearch } from "./icons";
 
@@ -291,25 +293,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-export function Row({
-  label,
-  hint,
-  control,
-}: {
-  label: string;
-  hint?: string;
-  control: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-4 py-2">
-      <div className="min-w-0 flex-1">
-        <p className="text-[12px] text-ink-dim">{label}</p>
-        {hint && <p className="mt-0.5 text-[10px] leading-relaxed text-ink-faint">{hint}</p>}
-      </div>
-      <div className="shrink-0 pt-px">{control}</div>
-    </div>
-  );
-}
+export { Row } from "./SettingsRow";
 
 /**
  * A row whose control needs the full width, like a long command line. It carries
@@ -729,7 +713,9 @@ function recordEncoderHint(toolchain: RecordToolchain | null, error: string | nu
   if (error) return error;
   if (!toolchain) return "Looking for FFmpeg…";
   if (toolchain.ready) return `Found: ${toolchain.path ?? "ffmpeg"}`;
-  return "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
+  return isMac
+    ? "FFmpeg was not found. Install it from Terminal with `brew install ffmpeg`, then press Re-check; without it a recording has nothing to encode with."
+    : "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
 }
 
 function CaptureShortcutColumn({
@@ -1053,7 +1039,9 @@ export function SettingsPanel({
     setInstalling(true);
     setEncoderError(null);
     try {
-      await installFfmpeg();
+      // macOS has no installer this app can run: the button re-checks instead, so
+      // a fresh `brew install ffmpeg` is picked up without restarting.
+      if (!isMac) await installFfmpeg();
     } catch (e) {
       setEncoderError(errorMessage(e));
     } finally {
@@ -1828,6 +1816,12 @@ export function SettingsPanel({
             />
           </Section>
 
+          {isMac && (
+            <Section title="macOS permissions">
+              <PermissionGrants compact />
+            </Section>
+          )}
+
           <Section title="Screen Recording">
             <Row
               label="Recording shortcuts"
@@ -1901,13 +1895,21 @@ export function SettingsPanel({
                   onClick={() => void installEncoder()}
                   className="rounded border border-edge bg-panel-2 px-2 py-1 text-[11px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-50"
                 >
-                  {installing ? "Installing…" : toolchain?.ready ? "Re-check" : "Install FFmpeg"}
+                  {installing
+                    ? "Installing…"
+                    : toolchain?.ready || isMac
+                      ? "Re-check"
+                      : "Install FFmpeg"}
                 </button>
               }
             />
             <Row
               label="Encoder path"
-              hint="Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
+              hint={
+                isMac
+                  ? "Leave empty to use FFmpeg on PATH or in Homebrew's bin. A full path is used instead, for a build kept somewhere else."
+                  : "Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
+              }
               control={
                 <input
                   value={settings.recordFfmpegPath}
@@ -1915,7 +1917,7 @@ export function SettingsPanel({
                   onKeyDown={(event) => event.stopPropagation()}
                   spellCheck={false}
                   aria-label="Encoder path"
-                  placeholder="C:\\ffmpeg\\bin\\ffmpeg.exe"
+                  placeholder={isMac ? "/opt/homebrew/bin/ffmpeg" : "C:\\ffmpeg\\bin\\ffmpeg.exe"}
                   className="w-52 rounded border border-edge bg-panel-2 px-2 py-1 font-mono text-[10px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
                 />
               }

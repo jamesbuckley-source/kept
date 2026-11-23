@@ -30,6 +30,7 @@ import {
   IconWindowCapture,
 } from "./icons";
 import { useSettings } from "../hooks/useSettings";
+import { isMac } from "../lib/platform";
 import {
   errorMessage,
   installFfmpeg,
@@ -255,21 +256,24 @@ export function RecordBar() {
         <div className="flex flex-1 items-center gap-2">
           <p className="min-w-0 flex-1 text-[13px] text-ink-dim">
             Screen recording needs <span className="text-ink">FFmpeg</span>.
+            {isMac ? " Install it with brew install ffmpeg, then re-check." : ""}
           </p>
           <button
             type="button"
             disabled={busy}
             onClick={() =>
               void run(async () => {
-                setNotice("Installing FFmpeg…");
-                await installFfmpeg();
+                if (!isMac) {
+                  setNotice("Installing FFmpeg…");
+                  await installFfmpeg();
+                }
                 setToolchain(await recordToolchain());
                 setNotice(null);
               })
             }
             className="shrink-0 rounded bg-accent/25 px-3 py-2 text-[13px] font-medium text-accent-hi transition-colors hover:bg-accent/40 disabled:opacity-50"
           >
-            {busy ? "Installing…" : "Install"}
+            {busy ? "Installing…" : isMac ? "Re-check" : "Install"}
           </button>
         </div>
         {(error || notice) && <Failure>{error ?? notice}</Failure>}

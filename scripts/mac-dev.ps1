@@ -35,7 +35,7 @@ $sshArgs = @("-i", $Key, "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o"
 
 # Everything the build reads. `.git`, `node_modules`, `dist` and `src-tauri/target`
 # are left alone: they are large, and the Mac has its own.
-$watched = @("src", "src-tauri\src", "src-tauri\Cargo.toml", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
+$watched = @("src", "src-tauri\src", "src-tauri\icons", "src-tauri\Cargo.toml", "src-tauri\tauri.conf.json", "src-tauri\capabilities", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
 
 function Send-Remote {
     param([string]$Script)
@@ -60,7 +60,7 @@ function Sync-Path {
     # on the Mac left edited files such as `src/lib/ipc.ts` at their old contents
     # because of its scp's timestamp handling, and the build then compiled a mix
     # of old and new code.
-    if ((Get-Item $local).PSIsContainer) {
+    if (Test-Path $local -PathType Container) {
         Send-Remote "rm -rf ~/$remote && mkdir -p ~/$remote"
     }
     & scp @sshArgs -r $local "${target}:~/$parent/" | Out-Null

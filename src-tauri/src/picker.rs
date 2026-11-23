@@ -118,10 +118,84 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     Ok(hex_at(&rgba, width, height, x, y))
 }
 
-/// Placeholder until the AppKit sampler lands.
+/// macOS has a native screen sampler: the system shows its own magnifier, takes
+/// the click itself and hands back the colour, so there is no overlay to draw and
+/// no Screen Recording grant to ask for — only what the user points at is read.
 #[cfg(target_os = "macos")]
-pub fn pick(_app: &AppHandle) -> Result<Option<String>> {
-    Err(AppError::msg("the colour picker is not available on macOS yet"))
+pub fn pick(app: &AppHandle) -> Result<Option<String>> {
+    use std::sync::mpsc;
+
+    window::hide(app);
+    // Give the window a moment to leave the screen before the sampler appears, so
+    // the app cannot be picked out of its own picture.
+    std::thread::sleep(Duration::from_millis(120));
+
+    let (sender, receiver) = mpsc::channel::<Result<Option<String>>>();
+    // `NSColorSampler` is AppKit, and AppKit only runs on the main thread; this
+    // pick runs on a worker because it waits for a person.
+    let started = app.run_on_main_thread(move || {
+        if let Err(e) = show_sampler(sender) {
+            log::warn!("could not show the colour sampler: {e}");
+        }
+    });
+    let outcome = match started {
+        Ok(()) => match receiver.recv_timeout(Duration::from_secs(120)) {
+            Ok(result) => result,
+            // The sampler was left open: nothing was picked, and the window comes
+            // back rather than waiting on a magnifier the user has forgotten.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err(AppError::msg("the colour sampler did not start"))
+            }
+        },
+        Err(e) => Err(AppError::msg(format!(
+            "could not open the colour sampler: {e}"
+        ))),
+    };
+    window::show(app);
+    outcome
+}
+
+/// Hands the sampler to AppKit and reports the picked colour through `sender`.
+///
+/// The block runs once, when the user clicks a pixel or presses Escape; a cancel
+/// arrives as a null colour, which is not an error.
+#[cfg(target_os = "macos")]
+fn show_sampler(sender: std::sync::mpsc::Sender<Result<Option<String>>>) -> Result<()> {
+    use block2::RcBlock;
+    use objc2_app_kit::{NSColor, NSColorSampler};
+
+    let sampler = NSColorSampler::new();
+    let handler = RcBlock::new(move |colour: *mut NSColor| {
+        // SAFETY: AppKit passes either a live NSColor or null for a cancel.
+        let hex = unsafe { colour.as_ref() }.and_then(colour_hex);
+        let _ = sender.send(Ok(hex));
+    });
+    // SAFETY: the sampler and the block are alive for the call, and the system
+    // keeps the sampler reachable for as long as its magnifier is on screen.
+    unsafe { sampler.showSamplerWithSelectionHandler(&handler) };
+    // The pick returns as soon as the block fires, which may be after this
+    // function has returned, so the sampler is deliberately not released here.
+    std::mem::forget(sampler);
+    Ok(())
+}
+
+/// `#rrggbb` for a sampled colour, converted to sRGB so a display-P3 sampler
+/// answer and an sRGB one produce the same code for the same pixel.
+#[cfg(target_os = "macos")]
+fn colour_hex(colour: &objc2_app_kit::NSColor) -> Option<String> {
+    use objc2_app_kit::NSColorSpace;
+
+    let space = NSColorSpace::sRGBColorSpace();
+    let converted = colour.colorUsingColorSpace(&space)?;
+    // A colour in the sRGB space has all three components.
+    let channel = |value: f64| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Some(format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(converted.redComponent()),
+        channel(converted.greenComponent()),
+        channel(converted.blueComponent())
+    ))
 }
 
 /// Where the pointer was when the user clicked to pick.
@@ -827,6 +901,20 @@ mod tests {
     #[test]
     fn an_unreadable_spot_is_an_error() {
         assert!(hex_of(u32::MAX).is_err());
+    }
+
+    /// The sampler's colour reaches history as the same `#rrggbb` the other
+    /// platforms store, whatever colour space AppKit answered in.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_sampled_colour_is_reported_in_srgb_hex() {
+        use objc2_app_kit::NSColor;
+
+        let orange = NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.5, 0.0, 1.0);
+        assert_eq!(colour_hex(&orange).unwrap(), "#ff8000");
+
+        let black = NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, 1.0);
+        assert_eq!(colour_hex(&black).unwrap(), "#000000");
     }
 
     #[cfg(windows)]

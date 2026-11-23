@@ -108,8 +108,30 @@ x11rb = { version = "0.13", features = ["record", "shape"] }
 # reach the rest of NSPasteboard.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSString", "NSURL"] }
-objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSWorkspace", "NSRunningApplication"] }
+objc2-foundation = { version = "0.3", features = [
+  "NSArray",
+  "NSData",
+  "NSDictionary",
+  "NSString",
+  "NSURL",
+] }
+objc2-app-kit = { version = "0.3", features = [
+  "NSPasteboard",
+  "NSWorkspace",
+  "NSRunningApplication",
+  "NSColor",
+  "NSColorSampler",
+  "NSColorSpace",
+] }
+objc2-vision = { version = "0.3", features = [
+  "VNRequestHandler",
+  "VNRecognizeTextRequest",
+  "VNRequest",
+  "VNObservation",
+] }
+# The colour sampler answers through a completion block, which is how AppKit
+# reports a result from its own magnifier.
+block2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
