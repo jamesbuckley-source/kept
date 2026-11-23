@@ -179,10 +179,7 @@ pub fn activate(handle: isize) -> bool {
     // became cooperative and applications are expected to ask rather than take —
     // but Kept is the frontmost application at this moment, so the request is
     // granted, and the flag is still what macOS 11 through 13 need.
-    // SAFETY: activating another application is a plain call with no ownership.
-    unsafe {
-        app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps)
-    }
+    app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps)
 }
 
 #[cfg(target_os = "linux")]

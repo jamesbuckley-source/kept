@@ -729,7 +729,9 @@ function recordEncoderHint(toolchain: RecordToolchain | null, error: string | nu
   if (error) return error;
   if (!toolchain) return "Looking for FFmpeg…";
   if (toolchain.ready) return `Found: ${toolchain.path ?? "ffmpeg"}`;
-  return "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
+  return isMac
+    ? "FFmpeg was not found. Install it from Terminal with `brew install ffmpeg`, then press Re-check; without it a recording has nothing to encode with."
+    : "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
 }
 
 function CaptureShortcutColumn({
@@ -1053,7 +1055,9 @@ export function SettingsPanel({
     setInstalling(true);
     setEncoderError(null);
     try {
-      await installFfmpeg();
+      // macOS has no installer this app can run: the button re-checks instead, so
+      // a fresh `brew install ffmpeg` is picked up without restarting.
+      if (!isMac) await installFfmpeg();
     } catch (e) {
       setEncoderError(errorMessage(e));
     } finally {
@@ -1901,13 +1905,21 @@ export function SettingsPanel({
                   onClick={() => void installEncoder()}
                   className="rounded border border-edge bg-panel-2 px-2 py-1 text-[11px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-50"
                 >
-                  {installing ? "Installing…" : toolchain?.ready ? "Re-check" : "Install FFmpeg"}
+                  {installing
+                    ? "Installing…"
+                    : toolchain?.ready || isMac
+                      ? "Re-check"
+                      : "Install FFmpeg"}
                 </button>
               }
             />
             <Row
               label="Encoder path"
-              hint="Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
+              hint={
+                isMac
+                  ? "Leave empty to use FFmpeg on PATH or in Homebrew's bin. A full path is used instead, for a build kept somewhere else."
+                  : "Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
+              }
               control={
                 <input
                   value={settings.recordFfmpegPath}
@@ -1915,7 +1927,7 @@ export function SettingsPanel({
                   onKeyDown={(event) => event.stopPropagation()}
                   spellCheck={false}
                   aria-label="Encoder path"
-                  placeholder="C:\\ffmpeg\\bin\\ffmpeg.exe"
+                  placeholder={isMac ? "/opt/homebrew/bin/ffmpeg" : "C:\\ffmpeg\\bin\\ffmpeg.exe"}
                   className="w-52 rounded border border-edge bg-panel-2 px-2 py-1 font-mono text-[10px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
                 />
               }

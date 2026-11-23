@@ -40,6 +40,7 @@ the CI artifact is the only view.
 | Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
 | OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |
 | Auto-paste | **Implemented** — the frontmost application's process id is remembered, reactivated with `NSRunningApplication`, and ⌘V is posted with `CGEventPost`. Gated on the Accessibility grant; the wizard explains it and the failure names the pane |
+| Screen recording | **Implemented for the whole screen** — `-f avfoundation`, `-pixel_format uyvy422` (the device rejects the demuxer's yuv420p default), `-capture_cursor` from the bar. The Screen Recording grant is checked at start, because AVFoundation otherwise waits forever for frames that never arrive. FFmpeg is found on `PATH`, in Homebrew's two prefixes or `~/.local/bin`; there is no installer to run on macOS, so the bar and Settings say `brew install ffmpeg` and offer Re-check. Region and window recording are still refused |
 
 Code lives in `src-tauri/src/macos_clipboard.rs`, `macos_capture.rs` and
 `macos_permissions.rs`, plus the `#[cfg(target_os = "macos")]` sections of
@@ -49,11 +50,9 @@ What is left of the Linux paths — `maim`, `xdotool`, `tesseract` — is gated 
 
 ## Not done — in the order worth doing
 
-1. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
-   existing "install ffmpeg" flow plus `-f avfoundation` input is the port.
-   Region and window recording are still refused on macOS (`choose_region`,
-   `choose_window`): ffmpeg records a screen, not a rectangle, until a selector
-   reports one.
+1. **Region and window recording** (`capture.rs::choose_region`/`choose_window`)
+   are refused on macOS: ffmpeg's AVFoundation screen device records a whole
+   screen, so a rectangle needs a selector that reports one first.
 2. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
    it needs a window rectangle and a way to wheel it.
 3. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is

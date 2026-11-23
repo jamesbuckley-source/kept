@@ -168,7 +168,7 @@ fn show_sampler(sender: std::sync::mpsc::Sender<Result<Option<String>>>) -> Resu
     let sampler = NSColorSampler::new();
     let handler = RcBlock::new(move |colour: *mut NSColor| {
         // SAFETY: AppKit passes either a live NSColor or null for a cancel.
-        let hex = unsafe { colour.as_ref() }.and_then(|colour| unsafe { colour_hex(colour) });
+        let hex = unsafe { colour.as_ref() }.and_then(colour_hex);
         let _ = sender.send(Ok(hex));
     });
     // SAFETY: the sampler and the block are alive for the call, and the system
@@ -183,18 +183,18 @@ fn show_sampler(sender: std::sync::mpsc::Sender<Result<Option<String>>>) -> Resu
 /// `#rrggbb` for a sampled colour, converted to sRGB so a display-P3 sampler
 /// answer and an sRGB one produce the same code for the same pixel.
 #[cfg(target_os = "macos")]
-unsafe fn colour_hex(colour: &objc2_app_kit::NSColor) -> Option<String> {
+fn colour_hex(colour: &objc2_app_kit::NSColor) -> Option<String> {
     use objc2_app_kit::NSColorSpace;
 
     let space = NSColorSpace::sRGBColorSpace();
     let converted = colour.colorUsingColorSpace(&space)?;
-    // SAFETY: a colour in the sRGB space has all three components.
+    // A colour in the sRGB space has all three components.
     let channel = |value: f64| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
     Some(format!(
         "#{:02x}{:02x}{:02x}",
-        channel(unsafe { converted.redComponent() }),
-        channel(unsafe { converted.greenComponent() }),
-        channel(unsafe { converted.blueComponent() })
+        channel(converted.redComponent()),
+        channel(converted.greenComponent()),
+        channel(converted.blueComponent())
     ))
 }
 
@@ -911,12 +911,10 @@ mod tests {
         use objc2_app_kit::NSColor;
 
         let orange = NSColor::colorWithSRGBRed_green_blue_alpha(1.0, 0.5, 0.0, 1.0);
-        // SAFETY: an sRGB colour carries all three components.
-        assert_eq!(unsafe { colour_hex(&orange) }.unwrap(), "#ff8000");
+        assert_eq!(colour_hex(&orange).unwrap(), "#ff8000");
 
         let black = NSColor::colorWithSRGBRed_green_blue_alpha(0.0, 0.0, 0.0, 1.0);
-        // SAFETY: as above.
-        assert_eq!(unsafe { colour_hex(&black) }.unwrap(), "#000000");
+        assert_eq!(colour_hex(&black).unwrap(), "#000000");
     }
 
     #[cfg(windows)]

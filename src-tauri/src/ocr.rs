@@ -204,16 +204,16 @@ fn recognize(png: &[u8]) -> std::result::Result<String, Box<dyn std::error::Erro
     let base: Retained<VNRequest> =
         Retained::into_super(Retained::into_super(request.clone()));
     let requests: Retained<NSArray<VNRequest>> = NSArray::from_retained_slice(&[base]);
-    // SAFETY: the handler runs the request synchronously and reports failure
-    // through the error out-parameter.
-    unsafe { handler.performRequests_error(&requests)? };
+    // Synchronous: the handler runs the request and reports failure through the
+    // error out-parameter.
+    handler.performRequests_error(&requests)?;
 
     let mut lines = Vec::new();
     if let Some(results) = request.results() {
         for observation in results.iter() {
-            // SAFETY: the observation came from a successful recognition, so it
-            // is a text observation; one candidate is the best line it read.
-            let candidates = unsafe { observation.topCandidates(1) };
+            // The observation came from a successful recognition, so it is a text
+            // observation; one candidate is the best line it read.
+            let candidates = observation.topCandidates(1);
             if let Some(line) = candidates.firstObject() {
                 lines.push(line.string().to_string());
             }
