@@ -58,8 +58,35 @@ pub fn play(settings: &Settings, outcome: Outcome) {
     }
 }
 
-/// Non-Windows builds have no audio playback wired up.
-#[cfg(not(windows))]
+/// Plays the bundled WAVs through `afplay`, which is part of macOS and needs a file
+/// on disk, so each sound is unpacked into the temp folder once per run.
+#[cfg(target_os = "macos")]
+pub fn play(settings: &Settings, outcome: Outcome) {
+    match choice(settings, outcome) {
+        Sound::Off => {}
+        Sound::Default => {
+            mac::play_embedded(
+                mac::default_cache(outcome),
+                mac::default_name(outcome),
+                mac::default_wav(outcome),
+            );
+        }
+        Sound::File(path) => {
+            // A custom file that vanished since it was chosen should still make the
+            // noise the user expects, so fall back to the bundled sound.
+            if !mac::play_path(std::path::Path::new(path)) {
+                mac::play_embedded(
+                    mac::default_cache(outcome),
+                    mac::default_name(outcome),
+                    mac::default_wav(outcome),
+                );
+            }
+        }
+    }
+}
+
+/// Other non-Windows builds have no audio playback wired up.
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn play(_settings: &Settings, _outcome: Outcome) {}
 
 /// Plays the tick that marks each second of a screenshot countdown.
@@ -70,6 +97,85 @@ pub fn play(_settings: &Settings, _outcome: Outcome) {}
 pub fn play_countdown_tick() {
     #[cfg(windows)]
     win::play_wav(win::TICK_WAV);
+    #[cfg(target_os = "macos")]
+    mac::play_embedded(&mac::TICK_CACHE, "tick", mac::TICK_WAV);
+}
+
+#[cfg(target_os = "macos")]
+mod mac {
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::sync::OnceLock;
+
+    use super::Outcome;
+
+    const COPY_WAV: &[u8] = include_bytes!("../sounds/copy.wav");
+    const FAIL_WAV: &[u8] = include_bytes!("../sounds/fail.wav");
+    pub(super) const TICK_WAV: &[u8] = include_bytes!("../sounds/tick.wav");
+
+    static COPY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    static FAIL_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    pub(super) static TICK_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+    pub(super) fn default_wav(outcome: Outcome) -> &'static [u8] {
+        match outcome {
+            Outcome::Copied => COPY_WAV,
+            Outcome::Failed => FAIL_WAV,
+        }
+    }
+
+    pub(super) fn default_cache(outcome: Outcome) -> &'static OnceLock<Option<PathBuf>> {
+        match outcome {
+            Outcome::Copied => &COPY_CACHE,
+            Outcome::Failed => &FAIL_CACHE,
+        }
+    }
+
+    pub(super) fn default_name(outcome: Outcome) -> &'static str {
+        match outcome {
+            Outcome::Copied => "copy",
+            Outcome::Failed => "fail",
+        }
+    }
+
+    /// Writes an embedded WAV out once and answers where it went. The name carries
+    /// the process id so two copies of the app cannot overwrite each other's file.
+    fn unpack(
+        cache: &'static OnceLock<Option<PathBuf>>,
+        name: &str,
+        bytes: &'static [u8],
+    ) -> Option<&'static Path> {
+        cache
+            .get_or_init(|| {
+                let path =
+                    std::env::temp_dir().join(format!("kept-{}-{name}.wav", std::process::id()));
+                std::fs::write(&path, bytes).ok()?;
+                Some(path)
+            })
+            .as_deref()
+    }
+
+    pub(super) fn play_embedded(
+        cache: &'static OnceLock<Option<PathBuf>>,
+        name: &str,
+        bytes: &'static [u8],
+    ) -> bool {
+        unpack(cache, name, bytes).is_some_and(play_path)
+    }
+
+    /// Playback is fire-and-forget: the copy must never wait for the sound.
+    pub(super) fn play_path(path: &Path) -> bool {
+        if !path.exists() {
+            return false;
+        }
+        Command::new("/usr/bin/afplay")
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+    }
 }
 
 #[cfg(windows)]
