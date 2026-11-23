@@ -20,6 +20,13 @@ pub const DEFAULT_HOTKEY: &str = "Alt+V";
 #[cfg(target_os = "macos")]
 pub const DEFAULT_HOTKEY: &str = "Super+Shift+V";
 
+/// The paste stack's chord. Option+Shift+V types a dead key on a Mac for the same
+/// reason Option+V does, so it moves to Command+Option+V there.
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_STACK_HOTKEY: &str = "Alt+Shift+V";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_STACK_HOTKEY: &str = "Super+Alt+V";
+
 /// The key that pauses a screen recording, on the same rule as the summon key.
 #[cfg(not(target_os = "macos"))]
 pub const DEFAULT_PAUSE_HOTKEY: &str = "Ctrl+Alt+P";
@@ -611,7 +618,7 @@ impl Default for Settings {
             record_hotkey: String::new(),
             record_stop_hotkey: String::new(),
             record_pause_hotkey: String::new(),
-            stack_paste_hotkey: "Alt+Shift+V".to_string(),
+            stack_paste_hotkey: DEFAULT_STACK_HOTKEY.to_string(),
             record_ffmpeg_path: String::new(),
             record_mouse: true,
             record_audio_device: String::new(),

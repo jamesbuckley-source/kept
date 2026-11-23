@@ -270,7 +270,10 @@ pub fn open_wizard<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         tauri::WebviewUrl::App("index.html?window=wizard".into()),
     )
     .title("Set up Kept")
-    .inner_size(560.0, 780.0)
+    // Shorter than the 780 the three steps would like: a 560x780 window does not
+    // fit a 768-tall desktop, and centring then hides its header off the top. The
+    // page scrolls, so the space it loses costs nothing.
+    .inner_size(560.0, 700.0)
     .min_inner_size(460.0, 480.0)
     .minimizable(false)
     .maximizable(false)
