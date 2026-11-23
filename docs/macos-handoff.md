@@ -38,6 +38,7 @@ the CI artifact is the only view.
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
 | Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
 | Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
+| OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |
 
 Code lives in `src-tauri/src/macos_clipboard.rs` plus the `#[cfg(target_os = "macos")]`
 sections of `clipboard.rs` and `sound.rs`. Everything else still falls through to
@@ -46,13 +47,10 @@ the **Linux** implementation, which is why the log shows `maim`, `xdotool` and
 
 ## Not done — in the order worth doing
 
-1. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
-   Mac. Vision's `VNRecognizeTextRequest` (objc2-vision) is offline and needs no
-   permission; `cargo test` covers the pure parts only.
-2. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
+1. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
    reactivating the previous `NSRunningApplication`, gated on the Accessibility
    TCC grant.
-3. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
+2. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
    existing "install ffmpeg" flow plus `-f avfoundation` input is the port.
    Region and window recording are still refused on macOS (`choose_region`,
    `choose_window`): ffmpeg records a screen, not a rectangle, until a selector

@@ -1,13 +1,14 @@
 //! Text recognition for captured images.
 //!
-//! Windows ships an OCR engine (Windows.Media.Ocr) that is fast, offline and
-//! needs no model downloads or extra binaries — the right trade-off for a tool
-//! that already targets Windows only. Recognition runs on a worker thread after
-//! the clip is stored, so a large screenshot never delays capture or the UI.
+//! Windows ships an OCR engine (Windows.Media.Ocr) and macOS ships another
+//! (Vision); both are fast, offline and need no model downloads or extra
+//! binaries. Recognition runs on a worker thread after the clip is stored, so a
+//! large screenshot never delays capture or the UI.
 
 use crate::error::{AppError, Result};
 
 /// Used when the engine cannot report its own limit.
+#[cfg(any(windows, target_os = "linux"))]
 const FALLBACK_MAX_DIMENSION: u32 = 2600;
 
 /// Extracts text from a tightly packed RGBA8 image. Returns an empty string when
@@ -104,7 +105,7 @@ fn to_bgra(rgba: &[u8], width: u32, height: u32, max_dimension: u32) -> (u32, u3
 /// Tesseract reads a file rather than memory, so the frame is written out as a
 /// PNG first. `--psm 6` treats the image as one uniform block of text, which is
 /// what the Windows engine's layout guess amounts to for a screenshot.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn extract_text(rgba: &[u8], width: u32, height: u32) -> Result<String> {
     if width == 0 || height == 0 {
         return Ok(String::new());
@@ -142,7 +143,89 @@ pub fn extract_text(rgba: &[u8], width: u32, height: u32) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-#[cfg(all(test, windows))]
+/// macOS ships Vision: offline, no permission, no model download. The frame is
+/// handed over as PNG data, which is the one image form `VNImageRequestHandler`
+/// decodes on its own.
+#[cfg(target_os = "macos")]
+pub fn extract_text(rgba: &[u8], width: u32, height: u32) -> Result<String> {
+    if width == 0 || height == 0 {
+        return Ok(String::new());
+    }
+    let expected = width as usize * height as usize * 4;
+    if rgba.len() < expected {
+        return Err(AppError::msg(format!(
+            "expected {expected} bytes of RGBA, got {}",
+            rgba.len()
+        )));
+    }
+    let png = encode_png(&rgba[..expected], width, height)?;
+    recognize(&png).map_err(|e| AppError::msg(format!("text recognition failed: {e}")))
+}
+
+#[cfg(target_os = "macos")]
+fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|e| {
+            AppError::msg(format!("could not prepare the image for recognition: {e}"))
+        })?;
+    Ok(png)
+}
+
+/// Runs one `VNRecognizeTextRequest` over the image and joins the lines it read.
+#[cfg(target_os = "macos")]
+fn recognize(png: &[u8]) -> std::result::Result<String, Box<dyn std::error::Error>> {
+    use objc2::rc::Retained;
+    use objc2::AnyThread;
+    use objc2_foundation::{NSArray, NSData, NSDictionary};
+    use objc2_vision::{
+        VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
+    };
+
+    let data = NSData::with_bytes(png);
+    let options = NSDictionary::new();
+    let handler = VNImageRequestHandler::initWithData_options(
+        VNImageRequestHandler::alloc(),
+        &data,
+        &options,
+    );
+
+    let request = VNRecognizeTextRequest::new();
+    // Accurate is the slower model, and the one that reads small interface text.
+    // Language correction joins a line the screenshot wrapped, which is what a
+    // reader of the extracted text wants.
+    // SAFETY: both setters are plain property writes on a request this call owns.
+    unsafe {
+        request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+        request.setUsesLanguageCorrection(true);
+    }
+    // A text request reaches `VNRequest` through `VNImageBasedRequest`, so the
+    // cast up the chain takes two steps.
+    let base: Retained<VNRequest> =
+        Retained::into_super(Retained::into_super(request.clone()));
+    let requests: Retained<NSArray<VNRequest>> = NSArray::from_retained_slice(&[base]);
+    // SAFETY: the handler runs the request synchronously and reports failure
+    // through the error out-parameter.
+    unsafe { handler.performRequests_error(&requests)? };
+
+    let mut lines = Vec::new();
+    if let Some(results) = request.results() {
+        for observation in results.iter() {
+            // SAFETY: the observation came from a successful recognition, so it
+            // is a text observation; one candidate is the best line it read.
+            let candidates = unsafe { observation.topCandidates(1) };
+            if let Some(line) = candidates.firstObject() {
+                lines.push(line.string().to_string());
+            }
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::*;
 
