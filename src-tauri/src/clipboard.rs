@@ -23,6 +23,8 @@ use tauri::{AppHandle, Emitter};
 use crate::animated;
 use crate::error::{AppError, Result};
 use crate::hashing;
+#[cfg(target_os = "macos")]
+use crate::macos_clipboard;
 use crate::models::{ClipContent, ClipKind, NewClip};
 use crate::search;
 use crate::settings::Settings;
@@ -558,7 +560,7 @@ fn motion_html() -> Option<String> {
 /// `arboard` carries no HTML, and X11 spells the target `text/html` rather than
 /// the registered `HTML Format`, so it is read through the tool that already
 /// publishes file lists.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn motion_html() -> Option<String> {
     let output = std::process::Command::new("xclip")
         .args(["-selection", "clipboard", "-t", "text/html", "-o"])
@@ -569,6 +571,13 @@ fn motion_html() -> Option<String> {
     }
     let html = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!html.is_empty()).then_some(html)
+}
+
+/// The HTML half of a motion copy on macOS: the same `public.html` a browser
+/// writes beside the file.
+#[cfg(target_os = "macos")]
+fn motion_html() -> Option<String> {
+    macos_clipboard::motion_html()
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +646,7 @@ pub fn write_flavoured(
 /// X11 has no clipboard session to hold open and arboard carries no rich
 /// flavours, so this writes what the port supports: text, an image, or a file
 /// list as its paths.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn write_flavoured(
     content: &ClipContent,
     html: Option<&str>,
@@ -675,10 +684,10 @@ pub fn write_flavoured(
 /// after `set_text` therefore releases the selection, and the clipboard reads as
 /// empty a moment later — which is what made "copy, then paste" paste nothing and
 /// made the clipboard warn that no manager took the contents over.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 static OWNER: Mutex<Option<arboard::Clipboard>> = Mutex::new(None);
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn with_owner<T>(write: impl FnOnce(&mut arboard::Clipboard) -> Result<T>) -> Result<T> {
     let mut slot = OWNER.lock();
     if slot.is_none() {
@@ -711,7 +720,7 @@ pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
     Ok(hashing::of_content(&ClipContent::Files(paths)))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
     let paths = vec![path.to_string_lossy().into_owned()];
     // One process owns the X11 selection at a time, so the file list and the
@@ -747,7 +756,7 @@ pub fn write_files(paths: &[String]) -> Result<String> {
 
 /// Publishes the paths as an X11 file list, which is what file managers and chat
 /// apps paste as files.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn write_files(paths: &[String]) -> Result<String> {
     if paths.is_empty() {
         return Err(AppError::Clipboard("there is no file to copy".into()));
@@ -762,7 +771,7 @@ pub fn write_files(paths: &[String]) -> Result<String> {
 
 /// Hands one target to `xclip`, which then serves the selection for as long as
 /// anything wants it — the X11 stand-in for keeping a clipboard session open.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn set_selection(target: &str, contents: &str) -> Result<()> {
     use std::io::Write as _;
 
@@ -793,7 +802,7 @@ fn set_selection(target: &str, contents: &str) -> Result<()> {
 }
 
 /// A local path spelled as the `file://` URI a `text/uri-list` carries.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn file_uri(path: &str) -> String {
     let mut uri = String::from("file://");
     for byte in path.bytes() {
@@ -808,7 +817,7 @@ fn file_uri(path: &str) -> String {
 }
 
 /// The local paths a `text/uri-list` names, ignoring blank lines and comments.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn parse_uri_list(listing: &str) -> Vec<String> {
     listing
         .lines()
@@ -856,7 +865,17 @@ pub fn clear() -> Result<()> {
             )),
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        // Cocoa does have an empty pasteboard, so the Mac clears it properly
+        // rather than leaving an empty string behind.
+        if macos_clipboard::write_text("", None, None) {
+            Ok(())
+        } else {
+            Err(AppError::Clipboard("could not empty the clipboard".into()))
+        }
+    }
+    #[cfg(target_os = "linux")]
     {
         // X11 cannot be emptied the way `EmptyClipboard` does it: a selection has
         // to be owned by someone. An empty string is the closest thing to "there is
@@ -1412,13 +1431,103 @@ pub(crate) fn process_name_for(_handle: isize) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Non-Windows stubs
+// macOS
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+pub fn sequence_number() -> u32 {
+    macos_clipboard::sequence_number()
+}
+
+#[cfg(target_os = "macos")]
+fn read_file_list() -> Option<Vec<String>> {
+    macos_clipboard::file_list()
+}
+
+#[cfg(target_os = "macos")]
+fn read_rich_text() -> (Option<String>, Option<String>) {
+    macos_clipboard::rich_text()
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_opt_out() -> bool {
+    macos_clipboard::opt_out()
+}
+
+#[cfg(target_os = "macos")]
+fn foreground_process_name() -> Option<String> {
+    macos_clipboard::frontmost_app()
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_flavoured(
+    content: &ClipContent,
+    html: Option<&str>,
+    rtf: Option<&str>,
+) -> Result<String> {
+    match content {
+        ClipContent::Text(text) => {
+            if !macos_clipboard::write_text(text, html, rtf) {
+                return Err(AppError::Clipboard("the pasteboard refused the copy".into()));
+            }
+        }
+        // arboard owns the image conversion, which is the one format where the
+        // pasteboard's own types differ between a copy and a paste.
+        ClipContent::Image {
+            width,
+            height,
+            rgba,
+        } => {
+            let mut clip = arboard::Clipboard::new()
+                .map_err(|e| AppError::Clipboard(format!("could not open the clipboard: {e}")))?;
+            clip.set_image(arboard::ImageData {
+                width: *width as usize,
+                height: *height as usize,
+                bytes: std::borrow::Cow::Borrowed(rgba.as_slice()),
+            })
+            .map_err(|e| AppError::Clipboard(e.to_string()))?;
+        }
+        ClipContent::Files(paths) => {
+            if !macos_clipboard::write_files(paths) {
+                return Err(AppError::Clipboard(
+                    "the pasteboard refused the file list".into(),
+                ));
+            }
+        }
+    }
+    Ok(hashing::of_content(content))
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_files(paths: &[String]) -> Result<String> {
+    if paths.is_empty() {
+        return Err(AppError::Clipboard("there is no file to copy".into()));
+    }
+    if !macos_clipboard::write_files(paths) {
+        return Err(AppError::Clipboard(
+            "the pasteboard refused the file list".into(),
+        ));
+    }
+    Ok(hashing::of_content(&ClipContent::Files(paths.to_vec())))
+}
+
+#[cfg(target_os = "macos")]
+pub fn write_file_and_text(path: &Path, text: &str) -> Result<String> {
+    let path = path.to_string_lossy().into_owned();
+    if !macos_clipboard::write_file_and_text(&path, text) {
+        return Err(AppError::Clipboard("the pasteboard refused the copy".into()));
+    }
+    Ok(hashing::of_content(&ClipContent::Files(vec![path])))
+}
+
+// ---------------------------------------------------------------------------
+// Linux stubs
 // ---------------------------------------------------------------------------
 
 /// X11 has no clipboard sequence number, so the content itself is the signal:
 /// whatever is on the clipboard is read and folded into a number. That costs a
 /// clipboard read per poll where Windows reads a counter.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn sequence_number() -> u32 {
     /// FNV-1a. Small, and enough to notice that the clipboard moved on.
     fn fold(seed: u32, bytes: &[u8]) -> u32 {
@@ -1453,7 +1562,7 @@ pub fn sequence_number() -> u32 {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_text() -> Option<String> {
     let mut clip = arboard::Clipboard::new().ok()?;
     let text = clip.get_text().ok()?;
@@ -1461,7 +1570,7 @@ fn read_text() -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn read_file_list() -> Option<Vec<String>> {
     // arboard has no file-list support, so the target is read with `xclip`. A
     // failure means the clipboard is offering no such target, which is the usual
@@ -1477,12 +1586,12 @@ fn read_file_list() -> Option<Vec<String>> {
     (!paths.is_empty()).then_some(paths)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn read_rich_text() -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn read_image() -> Option<ClipContent> {
     // arboard serves X11 as well as Windows, so the image path is the same code.
     let mut clip = arboard::Clipboard::new().ok()?;
@@ -1507,12 +1616,12 @@ fn read_image() -> Option<ClipContent> {
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn clipboard_opt_out() -> bool {
     false
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn foreground_process_name() -> Option<String> {
     // The X11 focus owner's process is the closest thing to "the app you copied
     // from"; the name comes from /proc, which is what a Linux user would expect.
@@ -1530,7 +1639,7 @@ mod tests {
 
     /// The X11 clipboard has one owner at a time, so the two tests that publish to
     /// it take turns instead of clobbering each other's selection.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     static X11_CLIPBOARD: Mutex<()> = Mutex::new(());
 
     #[cfg(windows)]
@@ -1729,7 +1838,7 @@ mod tests {
         assert_eq!(payload.len(), 22, "header plus the list terminator");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_path_becomes_a_percent_escaped_file_uri() {
         assert_eq!(file_uri("/tmp/plain.mp4"), "file:///tmp/plain.mp4");
@@ -1741,7 +1850,7 @@ mod tests {
         assert_eq!(file_uri("/tmp/a#b?c"), "file:///tmp/a%23b%3Fc");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_uri_list_reads_back_as_the_paths_it_names() {
         let listing = "# copied from Kept\r\nfile:///tmp/one.png\r\nfile:///tmp/two%20words.pdf\r\n";
@@ -1755,7 +1864,7 @@ mod tests {
         assert!(parse_uri_list("https://example.com/x.png").is_empty());
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "writes to the live X clipboard; run with DISPLAY set"]
     fn a_file_list_round_trips_through_the_x11_clipboard() {
@@ -1803,7 +1912,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "writes to the live X clipboard; run with DISPLAY set"]
     fn the_copied_images_html_round_trips_through_the_x11_clipboard() {

@@ -128,6 +128,28 @@ export function captureScrollingWindow(): Promise<void> {
   return invoke("capture_scrolling_window");
 }
 
+/** The macOS privacy grants the capture and paste features need. */
+export interface MacosPermissions {
+  macos: boolean;
+  screenRecording: boolean;
+  accessibility: boolean;
+}
+
+/** Which grants Kept holds; every one reads true off macOS. */
+export function permissions(): Promise<MacosPermissions> {
+  return invoke<MacosPermissions>("permissions");
+}
+
+/**
+ * Asks for one grant: the system prompt where there is one, and the settings
+ * pane where the switch is the only way in.
+ */
+export function requestPermission(
+  grant: "screenRecording" | "accessibility",
+): Promise<MacosPermissions> {
+  return invoke<MacosPermissions>("request_permission", { grant });
+}
+
 /** Shows the screen-recording toolbar, where a recording is started. */
 export function openRecordBar(): Promise<void> {
   return invoke("open_record_bar");
@@ -692,6 +714,75 @@ export function resumeCapture(): Promise<PauseState> {
 
 export function getSettings(): Promise<Settings> {
   return invoke<Settings>("get_settings");
+}
+
+// ---- onscreen ruler -------------------------------------------------------
+// The macOS ruler window draws its own shapes but asks the backend for every
+// string it shows, so both ports report measurements identically.
+
+/** One measurement, in physical screen pixels. */
+export type RulerMeasurement =
+  | { kind: "distance"; a: [number, number]; b: [number, number] }
+  | { kind: "box"; left: number; top: number; right: number; bottom: number }
+  | { kind: "angle"; vertex: [number, number]; a: [number, number]; b: [number, number] };
+
+export interface RulerSetup {
+  /** Top-left of the display in the desktop's coordinate space. */
+  origin: [number, number];
+  /** Width and height of the display, in physical pixels. */
+  width: number;
+  height: number;
+  /** Backing scale of the display: 2 on a Retina screen. */
+  scale: number;
+  /** Dots per inch implied by the scale. */
+  dpi: number;
+  /** Spacing between numbered ruler ticks, in physical pixels. */
+  tickStep: number;
+}
+
+export interface RulerReadout {
+  primary: string;
+  secondary: string;
+  /** What the Copy button writes. */
+  copy: string;
+}
+
+export function rulerSetup(): Promise<RulerSetup> {
+  return invoke<RulerSetup>("ruler_setup");
+}
+
+export function rulerMeasurementText(
+  measurement: RulerMeasurement,
+  units: string,
+  format: string,
+  dpi: number,
+): Promise<RulerReadout> {
+  return invoke<RulerReadout>("ruler_measurement_text", { measurement, units, format, dpi });
+}
+
+/** A bare pixel length — a guide's position — in the chosen units. */
+export function rulerLengthText(px: number, units: string, dpi: number): Promise<string> {
+  return invoke<string>("ruler_length_text", { px, units, dpi });
+}
+
+/** Copies the measurement to the clipboard and history; resolves with the text. */
+export function rulerCopyMeasurement(
+  measurement: RulerMeasurement,
+  units: string,
+  format: string,
+  dpi: number,
+): Promise<string> {
+  return invoke<string>("ruler_copy_measurement", { measurement, units, format, dpi });
+}
+
+/** Makes the overlay click-through, or gives the clicks back. */
+export function rulerSetLocked(locked: boolean): Promise<void> {
+  return invoke("ruler_set_locked", { locked });
+}
+
+/** Closes the ruler and releases anything a lock took over. */
+export function rulerClose(): Promise<void> {
+  return invoke("ruler_close");
 }
 
 export function updateSettings(patch: Partial<Settings>): Promise<Settings> {

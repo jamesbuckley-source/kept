@@ -1,7 +1,10 @@
 # Kept on macOS — plan
 
-Status: **planned, not started.** Nothing has been implemented yet.
-Written 2026-10-21 against version 0.13.6.
+Status: **in progress.** The Mac build now compiles, bundles, launches and is
+photographed on every pull request, and it runs on a MacinCloud Mac (macOS 26,
+arm64) that `scripts/mac-dev.ps1` rebuilds from this checkout on save. What is
+still inert on macOS: clipboard capture and write, auto-paste, OCR, the capture
+suite, sounds, and the `::` popup. Written 2026-10-21 against version 0.13.6.
 
 ## Decisions taken
 
@@ -52,7 +55,8 @@ Known Windows-shaped defaults that need per-platform values:
 
 ## Phases
 
-Estimates assume a working Mac or a `macos-14` runner to iterate against.
+Estimates assume a working Mac or a `macos-latest` runner to iterate against
+(`macos-14` was retired from GitHub Actions on 2 November 2026).
 
 ### Phase 0 — Make the Mac build produce a bundle (~0.5 day)
 
@@ -63,8 +67,14 @@ Estimates assume a working Mac or a `macos-14` runner to iterate against.
    Xcode command line tools — no Homebrew dependencies (`rusqlite` is bundled,
    TLS is rustls).
 4. Confirm the `.icns` renders correctly in Finder and the Dock.
+5. The `macos` job in `.github/workflows/ci.yml` builds this target on every pull
+   request: `cargo test`, then `tauri build --bundles app`, then checks the
+   `Info.plist`, the arch and that the app is ad-hoc signed. It shares no display
+   with a user, so it proves compilation and bundling only — never the clipboard,
+   the tray or a permission grant.
 
-**Done when:** a `.app` and `.dmg` are produced on a Mac and the app launches.
+**Done when:** a `.app` and `.dmg` are produced on a Mac and the app launches — the
+`.app` half is now checked on every pull request, on a runner.
 
 ### Phase 1 — Clipboard capture and write (~3–4 days, the bulk)
 
@@ -137,7 +147,7 @@ no path panics.
 1. Universal build: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`,
    build with `--target universal-apple-darwin`. This roughly doubles compile time;
    consider arm64-only first if release cadence matters more.
-2. `release.yml` becomes a matrix (`windows-latest`, `macos-14`), keeping
+2. `release.yml` becomes a matrix (`windows-latest`, `macos-latest`), keeping
    `cargo test` gating both.
 3. **`latest.json` conflict:** each job writes its own `latest.json` and the Windows
    job currently publishes it alone. Add a merge step that combines the `platforms`
@@ -165,7 +175,7 @@ same release.
 
 ## Risks
 
-1. **Cannot be verified from Windows.** Phases 1–3 need a Mac or a `macos-14` runner.
+1. **Cannot be verified from Windows.** Phases 1–3 need a Mac or a `macos-latest` runner.
    Expect several rounds of AppKit/TCC surprises. Land Phase 0 and a skeleton Phase 1
    early so CI starts building the target.
 2. **TCC permissions cannot be automated.** The Accessibility and Screen Recording

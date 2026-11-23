@@ -12,15 +12,21 @@
 //! blocks every keystroke on the machine until it returns, so it may not open
 //! windows or sleep — the work happens on the worker thread it signals.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::AtomicBool;
+#[cfg(any(windows, target_os = "linux"))]
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::Sender;
+#[cfg(any(windows, target_os = "linux"))]
+use std::sync::mpsc;
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
+#[cfg(any(windows, target_os = "linux"))]
 use crate::paste;
 use crate::settings::{Settings, MAX_TOKEN_CHARS};
+#[cfg(any(windows, target_os = "linux"))]
 use crate::window;
 
 /// How quickly the token's characters have to arrive to count as one trigger. Long
@@ -96,7 +102,7 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn apply(app: &AppHandle, settings: &Settings) {
     {
         let mut config = lock(&CONFIG);
@@ -115,6 +121,18 @@ pub fn apply(app: &AppHandle, settings: &Settings) {
     }
 }
 
+/// macOS has no recorder for another application's keystrokes yet, so the token
+/// and deny-list are kept up to date and nothing is watched: the `::` popup stays
+/// unavailable there rather than pretending to be armed.
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn apply(_app: &AppHandle, settings: &Settings) {
+    let mut config = lock(&CONFIG);
+    *config = Config {
+        token: settings.quick_paste_token.chars().collect(),
+        denied: settings.quick_paste_denied_apps.clone(),
+    };
+}
+
 /// Stops the hook; used on the way out of the process.
 pub fn stop() {
     #[cfg(windows)]
@@ -128,7 +146,7 @@ pub fn stop() {
             }
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         let hook = lock(&HOOK).take();
         if let Some(hook) = hook {
@@ -155,12 +173,13 @@ struct Hook {
 }
 
 /// The recording context the observer is iterating.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 struct Hook {
     context: u32,
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
 
 /// Starts the hook thread unless it is already running.
@@ -256,7 +275,7 @@ fn trigger(app: &AppHandle) {
     window::show_quick(app, origin);
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn ensure_started(app: &AppHandle) {
     trigger_sender(app);
     if lock(&HOOK).is_some() {
@@ -285,7 +304,7 @@ fn ensure_started(app: &AppHandle) {
 /// RECORD needs two connections: one owns the context, and the other reads the
 /// event stream. Nothing is grabbed, so typing is never held up and a keystroke
 /// cannot be lost while the popup decides what to do with it.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn observe(sender: Sender<u32>) {
     use x11rb::connection::{Connection, RequestConnection};
     use x11rb::protocol::record::{self, ConnectionExt as _};
@@ -405,14 +424,14 @@ fn observe(sender: Sender<u32>) {
 }
 
 /// The keyboard map, so a keycode plus the modifiers held can name a character.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 struct Keymap {
     first_keycode: u8,
     per_keycode: usize,
     keysyms: Vec<u32>,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 impl Keymap {
     fn new(first_keycode: u8, per_keycode: u8, keysyms: Vec<u32>) -> Self {
         Self {
@@ -436,7 +455,7 @@ impl Keymap {
 }
 
 /// The character a keysym stands for, in the two forms a token can be made of.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn char_of(keysym: u32) -> Option<char> {
     // Latin-1 is its own keysym range.
     if (0x20..=0x7e).contains(&keysym) {
@@ -450,7 +469,7 @@ fn char_of(keysym: u32) -> Option<char> {
 }
 
 /// Checks one typed character against the token, exactly as the Windows hook does.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn observe_character(typed: char) {
     if !target_allows_trigger() {
         return;
@@ -470,7 +489,7 @@ fn observe_character(typed: char) {
 }
 
 /// Whether the token typed into the focused window should open the popup.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn target_allows_trigger() -> bool {
     // Our own windows — the popup, the history overlay, the settings page — must
     // never open a second popup.
@@ -498,7 +517,7 @@ fn target_allows_trigger() -> bool {
 }
 
 /// The process that owns the X input focus.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn foreground_pid() -> Option<u32> {
     let report = paste::xdotool(&["getactivewindow", "getwindowpid"]).ok()?;
     report.split_whitespace().last()?.parse().ok()
@@ -506,7 +525,7 @@ fn foreground_pid() -> Option<u32> {
 
 /// Everything that has to happen between noticing the token and showing the popup,
 /// the X11 way: there is no caret to ask for, so the popup hangs off the pointer.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn trigger(app: &AppHandle) {
     if window::quick_is_open(app) {
         return;
@@ -527,7 +546,7 @@ fn trigger(app: &AppHandle) {
     window::show_quick(app, origin);
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn pointer_point() -> Option<(i32, i32)> {
     let report = paste::xdotool(&["getmouselocation", "--shell"]).ok()?;
     let value = |key: &str| {
@@ -540,7 +559,7 @@ fn pointer_point() -> Option<(i32, i32)> {
 }
 
 /// Answers with the channel the hook signals, starting the worker the first time.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn trigger_sender(app: &AppHandle) -> &'static Sender<()> {
     TRIGGER.get_or_init(|| {
         let (sender, receiver) = mpsc::channel::<()>();
@@ -890,7 +909,7 @@ mod tests {
 
     /// X11 reports a keycode and the modifiers held, so the character has to be
     /// looked up in the keyboard map: colon is the shifted column of `;`.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_keycode_and_its_modifiers_name_the_character_typed() {
         // Two keycodes, seven columns each: `a` and `;`/`:`.
@@ -907,7 +926,7 @@ mod tests {
         assert_eq!(map.character(200, 0), None, "past the end of the map");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_keysym_becomes_the_character_it_stands_for() {
         assert_eq!(char_of(0x3a), Some(':'));

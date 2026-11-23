@@ -219,6 +219,75 @@ pub fn capture_scrolling_window(app: AppHandle, state: State<'_, AppState>) -> R
     start_capture(app, state, capture::capture_scrolling)
 }
 
+/// The privacy grants the capture and paste features need on macOS.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Permissions {
+    /// True when the app is running on macOS, where the grants exist at all.
+    pub macos: bool,
+    /// Screen Recording: the screenshot tools and the colour picker.
+    pub screen_recording: bool,
+    /// Accessibility: auto-paste and the `::` popup's keystrokes.
+    pub accessibility: bool,
+}
+
+impl Permissions {
+    fn read() -> Self {
+        #[cfg(target_os = "macos")]
+        let (screen_recording, accessibility) = (
+            crate::macos_permissions::screen_recording_granted(),
+            crate::macos_permissions::accessibility_granted(),
+        );
+        // No other platform asks for one, so everything reads as granted and the
+        // interface's permission block stays hidden.
+        #[cfg(not(target_os = "macos"))]
+        let (screen_recording, accessibility) = (true, true);
+        Self {
+            macos: cfg!(target_os = "macos"),
+            screen_recording,
+            accessibility,
+        }
+    }
+}
+
+/// Reports whether macOS has given Kept the screen and the keyboard.
+#[tauri::command]
+pub fn permissions() -> Permissions {
+    Permissions::read()
+}
+
+/// Asks macOS for one grant and answers with the state afterwards.
+///
+/// Screen Recording raises the system prompt the first time; if it is still not
+/// held (the prompt was already answered, or dismissed) the settings pane is
+/// opened, because the switch is the only thing left. Accessibility has no
+/// prompt at all, so opening its pane *is* the request.
+#[tauri::command]
+pub fn request_permission(grant: String) -> Result<Permissions> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::macos_permissions::Pane;
+        match grant.as_str() {
+            "accessibility" => crate::macos_permissions::open_settings(Pane::Accessibility)?,
+            "screenRecording" => {
+                if !crate::macos_permissions::request_screen_recording() {
+                    crate::macos_permissions::open_settings(Pane::ScreenRecording)?;
+                }
+            }
+            other => {
+                return Err(AppError::msg(format!(
+                    "there is no permission called {other}"
+                )));
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = grant;
+    }
+    Ok(Permissions::read())
+}
+
 /// The address videos are served from, where the `media:` scheme cannot play them.
 ///
 /// WebKitGTK's media player has no source for a custom scheme, so on Linux the

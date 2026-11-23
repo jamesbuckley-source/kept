@@ -16,6 +16,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { formatBytes, formatCount, formatRelative } from "../lib/format";
+import { isMac } from "../lib/platform";
 import {
   errorMessage,
   copyText,
@@ -1621,7 +1622,11 @@ export function SettingsPanel({
           >
             <Row
               label="Global hotkey"
-              hint="Combinations are written with `+`, for example Alt+V or Ctrl+Shift+V."
+              hint={
+                isMac
+                  ? "Combinations are written with `+`, for example Super+Shift+V; Super is the Command key."
+                  : "Combinations are written with `+`, for example Alt+V or Ctrl+Shift+V."
+              }
               control={<HotkeyField value={settings.hotkey} onCommit={(next) => void onPatch({ hotkey: next })} />}
             />
             <Row
@@ -1706,11 +1711,19 @@ export function SettingsPanel({
 
           <Section
             title="Pasting"
-            hint="Auto-paste sends Ctrl+V to the window you were in before opening Kept."
+            hint={
+              isMac
+                ? "Auto-paste sends Command+V to the window you were in before opening Kept."
+                : "Auto-paste sends Ctrl+V to the window you were in before opening Kept."
+            }
           >
             <Row
               label="Paste automatically"
-              hint="Off by default: the clip is placed on the clipboard and you press Ctrl+V yourself."
+              hint={
+                isMac
+                  ? "Off by default: the clip is placed on the clipboard and you press Command+V yourself."
+                  : "Off by default: the clip is placed on the clipboard and you press Ctrl+V yourself."
+              }
               control={
                 <Toggle
                   label="Paste automatically"
@@ -2067,7 +2080,11 @@ export function SettingsPanel({
             />
             <Row
               label="Default capture"
-              hint="What the header's capture button, and Print Screen when it is enabled, start."
+              hint={
+                isMac
+                  ? "What the header's capture button starts."
+                  : "What the header's capture button, and Print Screen when it is enabled, start."
+              }
               control={
                 <CaptureModeField
                   label="Default capture type"
@@ -2087,17 +2104,21 @@ export function SettingsPanel({
                 />
               }
             />
-            <Row
-              label="Print Screen"
-              hint="Captures the default type above. On Windows the key belongs to the Snipping Tool, so turning this on takes it off that first and puts it back when switched off."
-              control={
-                <Toggle
-                  label="Print Screen captures"
-                  checked={settings.printScreenCapture}
-                  onChange={(next) => void onPatch({ printScreenCapture: next })}
-                />
-              }
-            />
+            {/* Print Screen is a Windows key: there is nothing for this to take on
+                a Mac, so the row is not offered there. */}
+            {!isMac && (
+              <Row
+                label="Print Screen"
+                hint="Captures the default type above. On Windows the key belongs to the Snipping Tool, so turning this on takes it off that first and puts it back when switched off."
+                control={
+                  <Toggle
+                    label="Print Screen captures"
+                    checked={settings.printScreenCapture}
+                    onChange={(next) => void onPatch({ printScreenCapture: next })}
+                  />
+                }
+              />
+            )}
             <Row
               label="Link previews"
               hint="Asks a site for its preview picture each time you copy a link. Off by default: the only fetch is then the one you ask for on a clip. Both use HTTPS for public hosts only and store just a thumbnail."
@@ -2686,7 +2707,11 @@ export function SettingsPanel({
             />
             <Row
               label="Sound on every capture"
-              hint="Plays the copy sound whenever Kept stores a new clip from any program, not just for the copies made inside it. Off by default: a tick on every Ctrl+C is a lot to live with."
+              hint={
+                isMac
+                  ? "Plays the copy sound whenever Kept stores a new clip from any program, not just for the copies made inside it. Off by default: a tick on every Command+C is a lot to live with."
+                  : "Plays the copy sound whenever Kept stores a new clip from any program, not just for the copies made inside it. Off by default: a tick on every Ctrl+C is a lot to live with."
+              }
               control={
                 <Toggle
                   label="Sound on every capture"

@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-21T03:45:41.097Z",
+  "updatedAt": "2026-11-23T02:34:39Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3804,6 +3804,60 @@
       "owner": "",
       "references": [],
       "updatedAt": "2026-11-21T03:44:47.601Z"
+    },
+    {
+      "id": "keep-x11-code-out-of-the-macos-build",
+      "title": "Keep the X11 code out of the macOS build",
+      "area": "Window",
+      "status": "shipped",
+      "summary": "`x11rb` and the RECORD/SHAPE code are now gated on `target_os = \"linux\"` instead of `not(windows)`, so the macOS build drops the X11 dependency entirely (`cargo tree` for aarch64-apple-darwin shows no x11rb) and `autocomplete::apply` has a macOS arm that records the token and installs no hook. `transparency_available` answers true on Cocoa, where the compositor always exists.",
+      "owner": "",
+      "references": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/src/window.rs",
+        "src-tauri/src/autocomplete.rs",
+        "docs/macos-support-plan.md",
+        "https://github.com/jamesbuckley-source/kept/pull/1"
+      ],
+      "updatedAt": "2026-11-23T02:03:12.750Z"
+    },
+    {
+      "id": "macos-clipboard-capture-and-write",
+      "title": "Clipboard capture and write on macOS",
+      "area": "Capture",
+      "status": "shipped",
+      "summary": "NSPasteboard replaces the Linux shim: the change counter drives the 350 ms poll again, text round-trips with its HTML and RTF flavours, images go through arboard, file lists are published as file URLs, and org.nspasteboard.ConcealedType and its siblings keep a password manager's copy out of history. Verified on a Mac with text, a rich text copy, a 64x64 PNG, a 3840x2160 screenshot and a Finder file copy.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/macos_clipboard.rs",
+        "src-tauri/src/clipboard.rs"
+      ],
+      "updatedAt": "2026-11-23T02:34:39Z"
+    },
+    {
+      "id": "macos-copy-sounds",
+      "title": "Copy sounds on macOS",
+      "area": "Utilities",
+      "status": "shipped",
+      "summary": "The embedded WAVs are unpacked into the temp folder once per run and played with afplay, with a custom sound file played from its path and a missing one falling back to the bundled sound, the same rule the Windows path follows.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/sound.rs"
+      ],
+      "updatedAt": "2026-11-23T02:34:39Z"
+    },
+    {
+      "id": "macos-app-icon-refresh",
+      "title": "Refresh the macOS app icon",
+      "area": "Distribution",
+      "status": "backlog",
+      "summary": "The dock shows older artwork than the current logo: icon.icns predates it. Regenerate the icon set with `npm run tauri icon <source.png>` from the current design and check the result in the dock and Finder.",
+      "owner": "",
+      "references": [
+        "src-tauri/icons/icon.icns",
+        "design"
+      ],
+      "updatedAt": "2026-11-23T02:34:39Z"
     }
   ]
 }

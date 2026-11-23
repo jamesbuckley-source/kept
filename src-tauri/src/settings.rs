@@ -11,7 +11,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
 
+/// The summon key a fresh install starts with. Option+V would type a dead key in
+/// most layouts, so a Mac gets the Command+Shift+V shape instead.
+#[cfg(windows)]
 pub const DEFAULT_HOTKEY: &str = "Alt+V";
+#[cfg(target_os = "linux")]
+pub const DEFAULT_HOTKEY: &str = "Alt+V";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_HOTKEY: &str = "Super+Shift+V";
+
+/// The paste stack's chord. Option+Shift+V types a dead key on a Mac for the same
+/// reason Option+V does, so it moves to Command+Option+V there.
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_STACK_HOTKEY: &str = "Alt+Shift+V";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_STACK_HOTKEY: &str = "Super+Alt+V";
+
+/// The key that pauses a screen recording, on the same rule as the summon key.
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_PAUSE_HOTKEY: &str = "Ctrl+Alt+P";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_PAUSE_HOTKEY: &str = "Super+Alt+P";
 
 /// The blue the capture overlays painted before the outline became a setting.
 pub const DEFAULT_CAPTURE_OUTLINE: &str = "#d60000";
@@ -586,7 +606,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             hotkey: DEFAULT_HOTKEY.to_string(),
-            pause_hotkey: "Ctrl+Alt+P".to_string(),
+            pause_hotkey: DEFAULT_PAUSE_HOTKEY.to_string(),
             new_clip_hotkey: String::new(),
             capture_region_hotkey: String::new(),
             capture_window_hotkey: String::new(),
@@ -598,7 +618,7 @@ impl Default for Settings {
             record_hotkey: String::new(),
             record_stop_hotkey: String::new(),
             record_pause_hotkey: String::new(),
-            stack_paste_hotkey: "Alt+Shift+V".to_string(),
+            stack_paste_hotkey: DEFAULT_STACK_HOTKEY.to_string(),
             record_ffmpeg_path: String::new(),
             record_mouse: true,
             record_audio_device: String::new(),
@@ -806,7 +826,7 @@ impl Settings {
         }
         self.pause_hotkey = self.pause_hotkey.trim().to_string();
         if self.pause_hotkey.is_empty() {
-            self.pause_hotkey = "Ctrl+Alt+P".to_string();
+            self.pause_hotkey = DEFAULT_PAUSE_HOTKEY.to_string();
         }
         // The capture shortcuts are an opt-in extra, so they share only the trim
         // rule with the two above: an empty field means "no shortcut" and must
@@ -1579,7 +1599,7 @@ mod tests {
     fn private_mode_and_auto_clear_defaults_are_sane() {
         let store = memory_store();
         let defaults = store.settings();
-        assert_eq!(defaults.pause_hotkey, "Ctrl+Alt+P");
+        assert_eq!(defaults.pause_hotkey, DEFAULT_PAUSE_HOTKEY);
         assert!(
             !defaults.auto_clear_clipboard,
             "the clipboard is not emptied unless asked"
@@ -1593,7 +1613,10 @@ mod tests {
                 "autoClearDelaySecs": 99_999
             }))
             .unwrap();
-        assert_eq!(clamped.pause_hotkey, "Ctrl+Alt+P", "an empty pause key resets");
+        assert_eq!(
+            clamped.pause_hotkey, DEFAULT_PAUSE_HOTKEY,
+            "an empty pause key resets"
+        );
         assert_eq!(clamped.auto_clear_delay_secs, 3_600, "the delay is capped");
     }
 

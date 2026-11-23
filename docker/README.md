@@ -133,6 +133,6 @@ Still limited or not yet available on Linux (Beta):
 - A scrolled capture costs about a second per step on llvmpipe, so a long page
   takes a minute or two.
 - macOS cannot be containerised. macOS-specific code is validated in CI
-  (`macos-14` runner) or on a real Mac, never here.
+  (`macos-latest` runner) or on a real Mac, never here.
 - OCR is tesseract, not `Windows.Media.Ocr`, so results differ from Windows.
 

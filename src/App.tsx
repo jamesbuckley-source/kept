@@ -24,6 +24,7 @@ import { WizardWindow } from "./components/WizardWindow";
 import { PromptDialog } from "./components/PromptDialog";
 import { CaptureCountdown } from "./components/CaptureCountdown";
 import { RecordArea } from "./components/RecordArea";
+import { RulerOverlay } from "./components/RulerOverlay";
 import { PasteStackPanel, PasteStackWindow } from "./components/PasteStackPanel";
 import { RecordBar } from "./components/RecordBar";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
@@ -4148,6 +4149,9 @@ export default function App() {
   }
   if (kind === "countdown") {
     return <CaptureCountdown />;
+  }
+  if (kind === "ruler") {
+    return <RulerOverlay />;
   }
   if (kind === "wizard") {
     return <WizardWindow />;
