@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-22T23:06:14.060Z",
+  "updatedAt": "2026-11-23T02:03:12.751Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3809,8 +3809,8 @@
       "id": "keep-x11-code-out-of-the-macos-build",
       "title": "Keep the X11 code out of the macOS build",
       "area": "Window",
-      "status": "backlog",
-      "summary": "`x11rb` and the code that calls it are gated on `cfg(not(windows))`, which includes macOS: the `.app` links the X11 crate, and the countdown circle and `::` popup run X11 connection code that can only fail on a Mac. Gate the dependency and both call sites on `cfg(target_os = \"linux\")` so a macOS build contains no X11 code at all.",
+      "status": "shipped",
+      "summary": "`x11rb` and the RECORD/SHAPE code are now gated on `target_os = \"linux\"` instead of `not(windows)`, so the macOS build drops the X11 dependency entirely (`cargo tree` for aarch64-apple-darwin shows no x11rb) and `autocomplete::apply` has a macOS arm that records the token and installs no hook. `transparency_available` answers true on Cocoa, where the compositor always exists.",
       "owner": "",
       "references": [
         "src-tauri/Cargo.toml",
@@ -3819,7 +3819,7 @@
         "docs/macos-support-plan.md",
         "https://github.com/jamesbuckley-source/kept/pull/1"
       ],
-      "updatedAt": "2026-11-22T23:06:14.060Z"
+      "updatedAt": "2026-11-23T02:03:12.750Z"
     }
   ]
 }
