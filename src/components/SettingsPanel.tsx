@@ -17,6 +17,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { formatBytes, formatCount, formatRelative } from "../lib/format";
 import { isMac } from "../lib/platform";
+import { Row } from "./SettingsRow";
 import {
   errorMessage,
   copyText,
@@ -44,6 +45,7 @@ import {
 import type { UpdateState } from "../hooks/useUpdater";
 import { CaptureModeField } from "./CaptureModeField";
 import { KeptMark } from "./KeptMark";
+import { PermissionGrants } from "./PermissionGrants";
 import { ReleaseNotesFrame } from "./ReleaseNotesFrame";
 import { IconChevronRight, IconClose, IconSearch } from "./icons";
 
@@ -291,25 +293,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   );
 }
 
-export function Row({
-  label,
-  hint,
-  control,
-}: {
-  label: string;
-  hint?: string;
-  control: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-4 py-2">
-      <div className="min-w-0 flex-1">
-        <p className="text-[12px] text-ink-dim">{label}</p>
-        {hint && <p className="mt-0.5 text-[10px] leading-relaxed text-ink-faint">{hint}</p>}
-      </div>
-      <div className="shrink-0 pt-px">{control}</div>
-    </div>
-  );
-}
+export { Row } from "./SettingsRow";
 
 /**
  * A row whose control needs the full width, like a long command line. It carries
@@ -1831,6 +1815,12 @@ export function SettingsPanel({
               }
             />
           </Section>
+
+          {isMac && (
+            <Section title="macOS permissions">
+              <PermissionGrants compact />
+            </Section>
+          )}
 
           <Section title="Screen Recording">
             <Row

@@ -36,6 +36,7 @@ the CI artifact is the only view.
 | Shortcut labels | `src/lib/platform.ts` drives the hints; Print Screen rows are hidden on a Mac |
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
+| Permissions in the UI | The wizard's "Paste & privacy" step and a "macOS permissions" section in Settings both show the two grants, whether they are held, and an Allow button that raises the prompt or opens the right pane |
 | Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
 | Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
 | OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |
@@ -69,6 +70,16 @@ pwsh ./scripts/mac-dev.ps1 -Once          # sync + debug build + relaunch
 ssh -i "$HOME/.ssh/kept_macincloud_ed25519" user956782@NY702.macincloud.com `
   'tail -n 20 ~/Library/Logs/ikept.it/Kept.log'
 ```
+
+The log line `macOS permissions: screen recording …, accessibility …` on every
+start says whether the two grants are held, which is the first thing to look at
+when a screenshot or a paste does nothing.
+
+Two things cannot be checked over SSH and need hands on the Mac: the two TCC
+grants (System Settings → Privacy & Security, or the wizard's Allow buttons) and
+therefore anything that reads the screen — `screencapture` from `sshd` fails with
+"could not create image from display", and ffmpeg's AVFoundation input simply
+waits for frames that never arrive.
 
 Clipboard checks that need no GUI:
 

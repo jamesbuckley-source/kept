@@ -126,6 +126,7 @@ pub fn window() -> Result<Option<ClipContent>> {
 
 /// Every display as one picture, the way the system's own fullscreen shot does.
 pub fn screen() -> Result<ClipContent> {
+    ensure_screen_recording()?;
     let shot = grab(&[])?.ok_or_else(|| AppError::msg("screencapture did not produce a picture"))?;
     let bounds = desktop_bounds();
     if !bounds.is_empty() {
@@ -139,6 +140,7 @@ pub fn area(rect: Rect) -> Result<ClipContent> {
     if rect.is_empty() {
         return Err(AppError::msg("there is no area to capture"));
     }
+    ensure_screen_recording()?;
     let spec = format!(
         "{},{},{},{}",
         rect.left,
@@ -157,34 +159,35 @@ pub fn area(rect: Rect) -> Result<ClipContent> {
 /// which is what "capture the previous area" needs, and there is no other way to
 /// ask `screencapture` what was chosen.
 fn interactive(selector: &[&str]) -> Result<Option<ClipContent>> {
+    ensure_screen_recording()?;
     let before = grab(&[]).ok().flatten().and_then(image_of);
     let Some(shot) = grab(selector)? else {
         return Ok(None);
     };
-    match (&before, image_of(shot.clone())) {
-        (Some((width, height, rgba)), Some((part_width, part_height, part))) => {
-            match locate(
-                rgba,
-                (*width, *height),
-                &part,
-                (part_width, part_height),
-            ) {
-                Some((x, y)) => {
-                    if let Some(area) = pixel_area(
-                        desktop_bounds(),
-                        (*width, *height),
-                        (x, y),
-                        (part_width, part_height),
-                    ) {
-                        *LAST_AREA.lock().unwrap_or_else(|e| e.into_inner()) = Some(area);
-                    }
-                }
-                None => {
-                    log::info!("could not work out where the selection came from; it will not be repeatable")
-                }
-            }
+    if let (Some((desktop_width, desktop_height, desktop)), ClipContent::Image { width, height, rgba }) =
+        (&before, &shot)
+    {
+        let Some((x, y)) = locate(
+            desktop,
+            (*desktop_width, *desktop_height),
+            rgba,
+            (*width, *height),
+        ) else {
+            log::info!(
+                "could not work out where the selection came from; it will not be repeatable"
+            );
+            return Ok(Some(shot));
+        };
+        if let Some(area) = pixel_area(
+            desktop_bounds(),
+            (*desktop_width, *desktop_height),
+            (x, y),
+            (*width, *height),
+        ) {
+            *LAST_AREA.lock().unwrap_or_else(|e| e.into_inner()) = Some(area);
         }
-        _ => log::info!("the selection was taken without a picture of the desktop to compare"),
+    } else {
+        log::info!("the selection was taken without a picture of the desktop to compare");
     }
     Ok(Some(shot))
 }
@@ -200,18 +203,25 @@ fn image_of(content: ClipContent) -> Option<(u32, u32, Vec<u8>)> {
     }
 }
 
+/// Every capture starts here: macOS keeps Screen Recording per app, so the grant
+/// is checked before anything is launched, asked for once, and named plainly when
+/// it is still missing.
+fn ensure_screen_recording() -> Result<()> {
+    if macos_permissions::screen_recording_granted()
+        || macos_permissions::request_screen_recording()
+    {
+        return Ok(());
+    }
+    log::warn!("the screen capture was refused: Screen Recording is not granted");
+    Err(macos_permissions::screen_recording_denied())
+}
+
 /// Runs `screencapture` with `args` and decodes the PNG it writes.
 ///
 /// `Ok(None)` means the user cancelled: Escape in the selector leaves no file
 /// behind. A refusal is reported as an error, because that is something the user
 /// has to go and fix.
 fn grab(args: &[&str]) -> Result<Option<ClipContent>> {
-    if !macos_permissions::screen_recording_granted()
-        && !macos_permissions::request_screen_recording()
-    {
-        log::warn!("the screen capture was refused: Screen Recording is not granted");
-        return Err(macos_permissions::screen_recording_denied());
-    }
     let path = std::env::temp_dir().join(format!("kept-shot-{}.png", uuid::Uuid::new_v4()));
     let output = std::process::Command::new(SCREENCAPTURE)
         .args(args)
