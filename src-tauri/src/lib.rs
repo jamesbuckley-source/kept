@@ -28,6 +28,8 @@ mod media;
 mod media_cache;
 #[cfg(not(windows))]
 mod media_server;
+#[cfg(target_os = "macos")]
+mod macos_clipboard;
 mod models;
 mod ocr;
 mod palette;

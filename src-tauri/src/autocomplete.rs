@@ -12,15 +12,21 @@
 //! blocks every keystroke on the machine until it returns, so it may not open
 //! windows or sleep — the work happens on the worker thread it signals.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::atomic::AtomicBool;
+#[cfg(any(windows, target_os = "linux"))]
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::Sender;
+#[cfg(any(windows, target_os = "linux"))]
+use std::sync::mpsc;
 use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
+#[cfg(any(windows, target_os = "linux"))]
 use crate::paste;
 use crate::settings::{Settings, MAX_TOKEN_CHARS};
+#[cfg(any(windows, target_os = "linux"))]
 use crate::window;
 
 /// How quickly the token's characters have to arrive to count as one trigger. Long
