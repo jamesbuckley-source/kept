@@ -37,11 +37,11 @@ the CI artifact is the only view.
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
 | Permissions in the UI | The wizard's "Paste & privacy" step and a "macOS permissions" section in Settings both show the two grants, whether they are held, and an Allow button that raises the system prompt (Screen Recording's own dialog, Accessibility's `AXIsProcessTrustedWithOptions` dialog) or opens the right pane when the dialog has already been answered |
-| Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
-| Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
-| OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |
-| Auto-paste | **Implemented** — the frontmost application's process id is remembered, reactivated with `NSRunningApplication`, and ⌘V is posted with `CGEventPost`. Gated on the Accessibility grant; the wizard explains it and the failure names the pane |
-| Screen recording | **Implemented for the whole screen** — `-f avfoundation`, `-pixel_format uyvy422` (the device rejects the demuxer's yuv420p default), `-capture_cursor` from the bar. The Screen Recording grant is checked at start, because AVFoundation otherwise waits forever for frames that never arrive. FFmpeg is found on `PATH`, in Homebrew's two prefixes or `~/.local/bin`; there is no installer to run on macOS, so the bar and Settings say `brew install ffmpeg` and offer Re-check. Region and window recording are still refused |
+| Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; Settings and the wizard have an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it. **Not yet run on a granted Mac** — the path is compiled, unit-tested and refusal-tested |
+| Colour picker | **Implemented** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored. The conversion is tested headlessly with AppKit colours; the magnifier itself has not been clicked through |
+| OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download. Verified end to end on the Mac: a copied PNG came back from the running app's history with `ocr_text = "CopyPaste OCR 2026"`, and the fixture test reads the same text |
+| Auto-paste | **Implemented** — the frontmost application's process id is remembered, reactivated with `NSRunningApplication`, and ⌘V is posted with `CGEventPost`. Gated on the Accessibility grant (asked for with the system dialog on the first paste) and fails with the pane to open. Not yet run with the grant in place |
+| Screen recording | **Implemented for the whole screen** — `-f avfoundation`, `-pixel_format uyvy422` (the device rejects the demuxer's yuv420p default; `-list_devices` on the Mac names it `Capture screen 0`), `-capture_cursor` from the bar. The Screen Recording grant is checked at start, because AVFoundation otherwise waits forever for frames that never arrive. FFmpeg is found on `PATH`, in Homebrew's two prefixes or `~/.local/bin` — the test Mac has a static 6.0 build at `~/.local/bin/ffmpeg`. There is no installer to run on macOS, so the bar and Settings say `brew install ffmpeg` and offer Re-check. A recording has not been made with the grant in place; region and window recording are still refused |
 | Dock / app icon | **Current** — regenerated from `design/app-icon.svg` (the `mark-only.svg` mark on a macOS squircle) with `npm run tauri icon`; the `.icns` in the bundle was the old cyan/amber logo |
 
 Code lives in `src-tauri/src/macos_clipboard.rs`, `macos_capture.rs` and
@@ -87,6 +87,14 @@ Clipboard checks that need no GUI:
 DB="$HOME/Library/Application Support/ikept.it/copypaste.db"
 printf 'some text' | pbcopy; sleep 1
 sqlite3 "$DB" "select id, kind, char_count, html is not null, rtf is not null from clips order by id desc limit 3;"
+```
+
+An image copy, which also exercises OCR end to end:
+
+```sh
+osascript -e 'set the clipboard to (read (POSIX file "/tmp/ocr-sample.png") as «class PNGf»)'
+sleep 4
+sqlite3 -header "$DB" "select id, kind, substr(preview,1,20), substr(ocr_text,1,40) from clips order by id desc limit 1;"
 ```
 
 Rich text needs a real pasteboard write; a two-line Swift script against AppKit
