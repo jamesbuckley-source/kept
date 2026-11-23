@@ -35,7 +35,7 @@ $sshArgs = @("-i", $Key, "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o"
 
 # Everything the build reads. `.git`, `node_modules`, `dist` and `src-tauri/target`
 # are left alone: they are large, and the Mac has its own.
-$watched = @("src", "src-tauri\src", "src-tauri\Cargo.toml", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
+$watched = @("src", "src-tauri\src", "src-tauri\icons", "src-tauri\Cargo.toml", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
 
 function Send-Remote {
     param([string]$Script)
@@ -56,6 +56,12 @@ function Sync-Path {
     # landing inside it as `src/src`.
     $parent = if ($parts.Length -gt 1) { $parts[0..($parts.Length - 2)] -join '/' } else { '.' }
     Send-Remote "mkdir -p ~/$parent"
+    # A copy merges, so a file deleted here would live on there and break the
+    # build (a component left behind by an older branch did exactly that). The
+    # twin is removed first, which makes the remote tree match this one.
+    if (Test-Path $local -PathType Container) {
+        Send-Remote "rm -rf ~/$remote"
+    }
     & scp @sshArgs -r $local "${target}:~/$parent/" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "copying $Relative failed ($LASTEXITCODE)" }
 }
