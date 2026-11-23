@@ -41,6 +41,7 @@ the CI artifact is the only view.
 | OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |
 | Auto-paste | **Implemented** — the frontmost application's process id is remembered, reactivated with `NSRunningApplication`, and ⌘V is posted with `CGEventPost`. Gated on the Accessibility grant; the wizard explains it and the failure names the pane |
 | Screen recording | **Implemented for the whole screen** — `-f avfoundation`, `-pixel_format uyvy422` (the device rejects the demuxer's yuv420p default), `-capture_cursor` from the bar. The Screen Recording grant is checked at start, because AVFoundation otherwise waits forever for frames that never arrive. FFmpeg is found on `PATH`, in Homebrew's two prefixes or `~/.local/bin`; there is no installer to run on macOS, so the bar and Settings say `brew install ffmpeg` and offer Re-check. Region and window recording are still refused |
+| Dock / app icon | **Current** — regenerated from `design/app-icon.svg` (the `mark-only.svg` mark on a macOS squircle) with `npm run tauri icon`; the `.icns` in the bundle was the old cyan/amber logo |
 
 Code lives in `src-tauri/src/macos_clipboard.rs`, `macos_capture.rs` and
 `macos_permissions.rs`, plus the `#[cfg(target_os = "macos")]` sections of
@@ -57,9 +58,7 @@ What is left of the Linux paths — `maim`, `xdotool`, `tesseract` — is gated 
    it needs a window rectangle and a way to wheel it.
 3. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
    no non-grabbing key recorder yet. It records the token and installs no hook.
-4. **Dock / app icon.** The `.icns` is older artwork than the current logo;
-   regenerate with `npm run tauri icon <source.png>`.
-5. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
+4. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
    on macOS (`window::set_taskbar_visibility` is a no-op there today).
 
 ## How to verify a change
