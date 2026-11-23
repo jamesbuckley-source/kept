@@ -447,7 +447,7 @@ mod tests {
     };
 
     use crate::error::AppError;
-    use crate::settings::Settings;
+    use crate::settings::{DEFAULT_STACK_HOTKEY, Settings};
 
     fn bindings(region: &str) -> Bindings {
         Bindings {
@@ -520,14 +520,14 @@ mod tests {
             "the summon key and the paste stack default, nothing else"
         );
         assert!(required.iter().any(|(owner, text, _)| {
-            *owner == "the paste stack shortcut" && *text == "Alt+Shift+V"
+            *owner == "the paste stack shortcut" && *text == DEFAULT_STACK_HOTKEY
         }));
     }
 
     #[test]
     fn the_paste_stack_shortcut_maps_back_and_survives_a_taken_combination() {
         let settings = Settings::default();
-        let pressed = "Alt+Shift+V".parse().expect("a valid shortcut");
+        let pressed = DEFAULT_STACK_HOTKEY.parse().expect("a valid shortcut");
         assert!(is_stack_paste(&pressed, &settings));
 
         // An empty field means the panel's button is the only way to paste.
@@ -552,16 +552,16 @@ mod tests {
     #[test]
     fn a_stack_shortcut_clash_is_refused() {
         let settings = Settings {
-            capture_region_hotkey: "Alt+Shift+V".into(),
+            capture_region_hotkey: DEFAULT_STACK_HOTKEY.into(),
             ..Settings::default()
         };
         let error = Bindings::from_settings(&settings)
             .required()
             .expect_err("one combination cannot mean two things");
         assert!(
-            error
-                .to_string()
-                .contains("`Alt+Shift+V` is already used by the region screenshot"),
+            error.to_string().contains(&format!(
+                "`{DEFAULT_STACK_HOTKEY}` is already used by the region screenshot"
+            )),
             "the message names the combination and its owner: {error}"
         );
     }
