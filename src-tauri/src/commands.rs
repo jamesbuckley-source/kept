@@ -268,7 +268,13 @@ pub fn request_permission(grant: String) -> Result<Permissions> {
     {
         use crate::macos_permissions::Pane;
         match grant.as_str() {
-            "accessibility" => crate::macos_permissions::open_settings(Pane::Accessibility)?,
+            "accessibility" => {
+                if !crate::macos_permissions::request_accessibility() {
+                    // The dialog only appears once: after a no, the switch is the
+                    // only way in, so the pane comes up as well.
+                    crate::macos_permissions::open_settings(Pane::Accessibility)?;
+                }
+            }
             "screenRecording" => {
                 if !crate::macos_permissions::request_screen_recording() {
                     crate::macos_permissions::open_settings(Pane::ScreenRecording)?;

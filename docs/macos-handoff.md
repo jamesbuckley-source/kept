@@ -36,7 +36,7 @@ the CI artifact is the only view.
 | Shortcut labels | `src/lib/platform.ts` drives the hints; Print Screen rows are hidden on a Mac |
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
-| Permissions in the UI | The wizard's "Paste & privacy" step and a "macOS permissions" section in Settings both show the two grants, whether they are held, and an Allow button that raises the prompt or opens the right pane |
+| Permissions in the UI | The wizard's "Paste & privacy" step and a "macOS permissions" section in Settings both show the two grants, whether they are held, and an Allow button that raises the system prompt (Screen Recording's own dialog, Accessibility's `AXIsProcessTrustedWithOptions` dialog) or opens the right pane when the dialog has already been answered |
 | Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
 | Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
 | OCR | **Works** — Vision's `VNRecognizeTextRequest` at accurate level with language correction. Offline, no permission, no model download; the fixture test reads "copypaste" and "2026" on the Mac |

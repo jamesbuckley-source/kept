@@ -348,8 +348,7 @@ pub fn send_backspaces(count: usize) -> Result<()> {
 pub fn send_backspaces(count: usize) -> Result<()> {
     if !crate::macos_permissions::accessibility_granted() {
         return Err(crate::macos_permissions::accessibility_denied());
-    }
-    for _ in 0..count.clamp(1, 8) {
+    }    for _ in 0..count.clamp(1, 8) {
         cg::press(cg::KEY_DELETE);
     }
     Ok(())
@@ -553,9 +552,10 @@ fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {    // Supplying the scan
 #[cfg(target_os = "macos")]
 pub fn send_paste() -> Result<()> {
     // Posting into another application is exactly what the Accessibility grant is
-    // for; without it macOS silently ignores the event, so it is checked first and
-    // named plainly.
-    if !crate::macos_permissions::accessibility_granted() {
+    // for; without it macOS silently ignores the event. Asking here raises the
+    // system dialog at the moment the user first wants a paste, which is where it
+    // makes sense, and names the pane when the dialog has already been answered.
+    if !crate::macos_permissions::request_accessibility() {
         return Err(crate::macos_permissions::accessibility_denied());
     }
     if !cg::command(cg::KEY_V) {
