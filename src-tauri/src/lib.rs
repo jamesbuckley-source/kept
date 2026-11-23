@@ -154,6 +154,12 @@ pub fn run() {
             commands::change_vault_passphrase,
             commands::pick_screen_color,
             commands::open_ruler,
+            ruler::ruler_setup,
+            ruler::ruler_measurement_text,
+            ruler::ruler_length_text,
+            ruler::ruler_copy_measurement,
+            ruler::ruler_set_locked,
+            ruler::ruler_close,
             commands::capture_screen_region,
             commands::capture_screen_window,
             commands::capture_whole_screen,
@@ -442,6 +448,11 @@ fn sync_autostart(app: &tauri::AppHandle, enabled: bool) {
 
 fn on_shortcut(app: &tauri::AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     if event.state() != ShortcutState::Pressed {
+        return;
+    }
+    // While the ruler is locked click-through it owns Esc globally, so the
+    // overlay can be given its clicks back without reaching for the mouse.
+    if shortcut.to_string().eq_ignore_ascii_case("escape") && ruler::unlock(app) {
         return;
     }
     let settings = app.state::<AppState>().store.settings();

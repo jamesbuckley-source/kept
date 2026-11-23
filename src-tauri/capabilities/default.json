@@ -13,7 +13,8 @@
     "record-area",
     "countdown",
     "stack",
-    "quick"
+    "quick",
+    "ruler"
   ],
   "permissions": [
     "core:default",

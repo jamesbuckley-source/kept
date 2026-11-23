@@ -1,16 +1,25 @@
 //! The onscreen ruler.
 //!
-//! A topmost, transparent Win32 popup that measures the desktop in physical
-//! pixels: distances, boxes, angles and guides. Like the capture overlays it owns
-//! the screen from a dedicated thread and paints with GDI; unlike them it stays up
-//! until closed and can be locked click-through so other applications remain
-//! usable underneath.
+//! A topmost, transparent overlay that measures the desktop in physical pixels:
+//! distances, boxes, angles and guides. On Windows it owns the screen from a
+//! dedicated thread and paints with GDI; on macOS it is a transparent webview
+//! that paints the same overlay on a canvas. Neither version gives the screen
+//! back until it is closed, and both can be locked click-through so other
+//! applications remain usable underneath.
 //!
 //! The geometry and formatting helpers at the top are free of FFI so they can be
-//! tested like the capture module's selection rules.
+//! tested like the capture module's selection rules. The macOS frontend draws
+//! shapes but asks these helpers for every string it shows, so the two ports
+//! cannot drift apart on units, DIP conversion or copy formats.
 
-use crate::error::Result;
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager};
+
+use crate::error::{AppError, Result};
 use crate::settings::Settings;
+
+/// Label of the macOS ruler window; also listed in the capability file.
+pub const RULER_LABEL: &str = "ruler";
 
 /// How a measurement is printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,7 +76,11 @@ impl CopyFormat {
 }
 
 /// One thing the ruler is measuring, in physical screen pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The shape is also the wire format of the macOS overlay: points travel as
+/// `[x, y]` pairs and the variant name is the `kind` tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Measurement {
     Distance {
         a: (i32, i32),
@@ -353,6 +366,154 @@ fn css_length(value: i32, units: Units, dpi: u32) -> String {
     }
 }
 
+/// What the ruler window is told about the display it covers.
+///
+/// Everything is in physical pixels: the overlay draws in that space so a
+/// measurement is a count of real screen pixels no matter the display's scale.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RulerSetup {
+    /// Top-left corner of the display in the desktop's coordinate space.
+    pub origin: (i32, i32),
+    pub width: u32,
+    pub height: u32,
+    /// Backing scale of the display: `2.0` on a Retina screen.
+    pub scale: f64,
+    /// Dots per inch implied by the scale, for the DIP conversions.
+    pub dpi: u32,
+    /// Spacing between numbered ticks, in physical pixels.
+    pub tick_step: i32,
+}
+
+/// The three strings a measurement shows: the readout, its second line, and what
+/// Copy writes.
+#[derive(Debug, Clone, Serialize)]
+pub struct RulerReadout {
+    pub primary: String,
+    pub secondary: String,
+    pub copy: String,
+}
+
+/// The display the ruler window covers, in physical pixels.
+///
+/// Read from the window rather than the monitor: macOS keeps a window out from
+/// under the menu bar, and the overlay has to draw in the pixels it actually
+/// occupies or every measurement is off by the difference.
+#[tauri::command]
+pub fn ruler_setup(app: AppHandle) -> Result<RulerSetup> {
+    let window = app
+        .get_webview_window(RULER_LABEL)
+        .ok_or_else(|| AppError::msg("the ruler window is not open"))?;
+    let scale = window.scale_factor()?;
+    let size = window.inner_size()?;
+    let position = window.outer_position()?;
+    let dpi = (scale * 96.0).round() as u32;
+    // Logged once per overlay: the first thing to check when a measurement looks
+    // wrong is whether the webview really covers the area it thinks it does.
+    log::info!(
+        "the ruler is drawing {}×{} at {scale}x ({dpi} dpi), origin {}×{}",
+        size.width,
+        size.height,
+        position.x,
+        position.y
+    );
+    Ok(RulerSetup {
+        origin: (position.x, position.y),
+        width: size.width,
+        height: size.height,
+        scale,
+        dpi,
+        tick_step: tick_step(scale),
+    })
+}
+
+/// Formats one measurement for the macOS overlay.
+///
+/// The overlay owns hit-testing and drawing but never formats a number itself,
+/// so both ports print the same values from the same tested helpers.
+#[tauri::command]
+pub fn ruler_measurement_text(
+    measurement: Measurement,
+    units: String,
+    format: String,
+    dpi: u32,
+) -> RulerReadout {
+    let units = Units::from_setting(&units);
+    let format = CopyFormat::from_setting(&format);
+    RulerReadout {
+        primary: measurement.primary(units, dpi),
+        secondary: measurement.secondary(),
+        copy: measurement.formatted(units, format, dpi),
+    }
+}
+
+/// A bare pixel length — a guide's position — in the chosen units.
+#[tauri::command]
+pub fn ruler_length_text(px: f64, units: String, dpi: u32) -> String {
+    unit_text(px, Units::from_setting(&units), dpi)
+}
+
+/// Writes one measurement to the clipboard and history, as the Windows ruler's
+/// Copy button does, and returns the text so the overlay can confirm it.
+#[tauri::command]
+pub fn ruler_copy_measurement(
+    app: AppHandle,
+    measurement: Measurement,
+    units: String,
+    format: String,
+    dpi: u32,
+) -> Result<String> {
+    let text = measurement.formatted(
+        Units::from_setting(&units),
+        CopyFormat::from_setting(&format),
+        dpi,
+    );
+    crate::commands::record_text_clip(&app, &text, "Screen ruler")?;
+    Ok(text)
+}
+
+/// Makes the overlay click-through, or gives the clicks back.
+#[tauri::command]
+pub fn ruler_set_locked(app: AppHandle, locked: bool) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::set_locked(&app, locked)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, locked);
+        Ok(())
+    }
+}
+
+/// Puts the ruler away, releasing anything a lock took over.
+#[tauri::command]
+pub fn ruler_close(app: AppHandle) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::close(&app)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
+/// Gives the screen back after a lock, e.g. from the Esc shortcut the lock takes.
+/// Returns whether a locked ruler was actually released.
+pub fn unlock(app: &AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::unlock(app)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        false
+    }
+}
+
 /// Opens the ruler, or unlocks/closes the one already showing.
 pub fn open(app: tauri::AppHandle, settings: Settings) -> Result<()> {
     #[cfg(windows)]
@@ -366,14 +527,11 @@ pub fn open(app: tauri::AppHandle, settings: Settings) -> Result<()> {
             "the onscreen ruler is only available on Windows",
         ))
     }
-    // The ruler is a Win32 popup painted with GDI. macOS has no equivalent, so the
-    // arrow that opens it answers honestly instead of blaming Windows.
+    // macOS gets the same ruler as a transparent overlay window the frontend
+    // paints; the Win32 popup itself has no equivalent there.
     #[cfg(target_os = "macos")]
     {
-        let _ = (app, settings);
-        Err(crate::error::AppError::msg(
-            "the onscreen ruler is not available on macOS yet",
-        ))
+        macos::open(app, settings)
     }
 }
 
@@ -3382,6 +3540,157 @@ mod platform {
     }
 }
 
+/// The macOS ruler: the same overlay, built as a transparent webview window that
+/// the frontend paints on a canvas.
+///
+/// It covers one display in physical pixels and stays above every application, so
+/// the frontend's coordinates are screen pixels and a measurement is a count of
+/// the same pixels the Windows ruler reports.
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tauri::{
+        AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+        WebviewWindowBuilder,
+    };
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    use super::{RULER_LABEL, Settings};
+    use crate::error::{AppError, Result};
+
+    /// Whether the overlay is currently click-through. The window itself does not
+    /// report it back, and the lock has to be known before taking Esc away.
+    static LOCKED: AtomicBool = AtomicBool::new(false);
+
+    pub fn open(app: AppHandle, settings: Settings) -> Result<()> {
+        // The hotkey and the toolbar arrow mean the same thing here as on
+        // Windows: a second press puts the ruler away instead of stacking a
+        // second overlay on top of the first.
+        if app.get_webview_window(RULER_LABEL).is_some() {
+            return close(&app);
+        }
+        let _ = settings;
+        let handle = app.clone();
+        std::thread::Builder::new()
+            .name("ruler-window".into())
+            .spawn(move || {
+                if let Err(e) = build(&handle) {
+                    log::warn!("could not open the ruler: {e}");
+                }
+            })
+            .map_err(|e| AppError::msg(format!("could not start the ruler: {e}")))?;
+        Ok(())
+    }
+
+    fn build(app: &AppHandle) -> Result<()> {
+        let window = WebviewWindowBuilder::new(
+            app,
+            RULER_LABEL,
+            WebviewUrl::App("index.html?window=ruler".into()),
+        )
+        .title("Kept ruler")
+        // Replaced with the display's size once it exists; the first size only has
+        // to be large enough for the webview to lay its page out.
+        .inner_size(640.0, 480.0)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .decorations(false)
+        // The overlay has to let the desktop show through between its lines;
+        // `transparent` plus no shadow is what stops the window painting a sheet
+        // of its theme background.
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        // Every Space, so switching desktops does not leave the ruler behind.
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        // Deliberately not content-protected: the Windows ruler is part of a
+        // screenshot, and the overlay is meant to be photographed with what it
+        // measures.
+        .focused(true)
+        .visible(false)
+        .build()?;
+
+        // Cover the display rather than going fullscreen: a native fullscreen
+        // window slides onto a Space of its own and takes the measured desktop
+        // with it, and the overlay would be measuring itself. The work area is
+        // used because a window cannot sit under the menu bar, and asking for the
+        // full height only makes the WindowServer shift it down and clip the
+        // bottom instead.
+        if let Some(monitor) = window.current_monitor()? {
+            let area = monitor.work_area();
+            let _ = window.set_position(PhysicalPosition::new(area.position.x, area.position.y));
+            let _ = window.set_size(PhysicalSize::new(
+                area.size.width.max(1),
+                area.size.height.max(1),
+            ));
+        }
+        window.show()?;
+        let _ = window.set_focus();
+        log::info!("the onscreen ruler is open");
+        Ok(())
+    }
+
+    pub fn set_locked(app: &AppHandle, locked: bool) -> Result<()> {
+        let window = app
+            .get_webview_window(RULER_LABEL)
+            .ok_or_else(|| AppError::msg("the ruler window is not open"))?;
+        window.set_ignore_cursor_events(locked)?;
+        if locked {
+            // A click-through window cannot be reached by the mouse and stops
+            // being key as soon as another app is clicked, so its own Escape
+            // handler is no longer enough. Taking Esc globally while locked (and
+            // giving it back on unlock) is the macOS equivalent of the Win32
+            // ruler's RegisterHotKey.
+            if let Err(e) = app.global_shortcut().register("Escape") {
+                let _ = window.set_ignore_cursor_events(false);
+                return Err(AppError::msg(format!(
+                    "Esc could not be taken while the ruler is locked: {e}"
+                )));
+            }
+            LOCKED.store(true, Ordering::SeqCst);
+        } else {
+            release_escape(app);
+            LOCKED.store(false, Ordering::SeqCst);
+            let _ = window.set_focus();
+        }
+        Ok(())
+    }
+
+    pub fn unlock(app: &AppHandle) -> bool {
+        if !LOCKED.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        release_escape(app);
+        if let Some(window) = app.get_webview_window(RULER_LABEL) {
+            let _ = window.set_ignore_cursor_events(false);
+            let _ = window.show();
+            let _ = window.set_focus();
+            // The toolbar draws the padlock open again without waiting for a click.
+            let _ = app.emit_to(RULER_LABEL, "ruler:unlocked", ());
+        }
+        true
+    }
+
+    pub fn close(app: &AppHandle) -> Result<()> {
+        LOCKED.store(false, Ordering::SeqCst);
+        release_escape(app);
+        if let Some(window) = app.get_webview_window(RULER_LABEL) {
+            window.close()?;
+        }
+        Ok(())
+    }
+
+    fn release_escape(app: &AppHandle) {
+        if let Err(e) = app.global_shortcut().unregister("Escape") {
+            // Nothing registered is the normal case outside a lock.
+            log::debug!("no Esc shortcut to release: {e}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3485,5 +3794,53 @@ mod tests {
         assert!(SnapKind::Point < SnapKind::Guide);
         assert!(SnapKind::Window < SnapKind::Edge);
         assert!(SnapKind::Edge < SnapKind::Grid);
+    }
+
+    /// The macOS overlay sends measurements back over IPC, so the JSON shape is a
+    /// contract between the two halves of the feature, not an implementation
+    /// detail.
+    #[test]
+    fn a_measurement_round_trips_through_the_overlays_json_shape() {
+        let distance = Measurement::Distance {
+            a: (10, 20),
+            b: (210, 20),
+        };
+        let json = serde_json::to_string(&distance).expect("serializes");
+        assert_eq!(json, r#"{"kind":"distance","a":[10,20],"b":[210,20]}"#);
+        let back: Measurement = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, distance);
+
+        let angle = Measurement::Angle {
+            vertex: (5, 5),
+            a: (105, 5),
+            b: (5, 105),
+        };
+        let back: Measurement = serde_json::from_str(&serde_json::to_string(&angle).unwrap())
+            .expect("deserializes an angle");
+        assert_eq!(back, angle);
+    }
+
+    #[test]
+    fn the_readout_command_uses_the_same_helpers_as_the_windows_ruler() {
+        let measurement = Measurement::Box {
+            left: 0,
+            top: 0,
+            right: 150,
+            bottom: 75,
+        };
+        let readout = super::ruler_measurement_text(
+            measurement,
+            "both".into(),
+            "css".into(),
+            144,
+        );
+        assert_eq!(readout.primary, "150 × 75 px · 100 × 50 dip");
+        assert_eq!(readout.secondary, "area 11,250 px² · perimeter 450 px");
+        assert_eq!(
+            readout.copy,
+            "width: 150px; height: 75px;",
+            "Both prints physical pixels in CSS, as the settings promise"
+        );
+        assert_eq!(super::ruler_length_text(200.0, "dip".into(), 192), "100 dip");
     }
 }

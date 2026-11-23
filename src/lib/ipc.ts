@@ -716,6 +716,75 @@ export function getSettings(): Promise<Settings> {
   return invoke<Settings>("get_settings");
 }
 
+// ---- onscreen ruler -------------------------------------------------------
+// The macOS ruler window draws its own shapes but asks the backend for every
+// string it shows, so both ports report measurements identically.
+
+/** One measurement, in physical screen pixels. */
+export type RulerMeasurement =
+  | { kind: "distance"; a: [number, number]; b: [number, number] }
+  | { kind: "box"; left: number; top: number; right: number; bottom: number }
+  | { kind: "angle"; vertex: [number, number]; a: [number, number]; b: [number, number] };
+
+export interface RulerSetup {
+  /** Top-left of the display in the desktop's coordinate space. */
+  origin: [number, number];
+  /** Width and height of the display, in physical pixels. */
+  width: number;
+  height: number;
+  /** Backing scale of the display: 2 on a Retina screen. */
+  scale: number;
+  /** Dots per inch implied by the scale. */
+  dpi: number;
+  /** Spacing between numbered ruler ticks, in physical pixels. */
+  tickStep: number;
+}
+
+export interface RulerReadout {
+  primary: string;
+  secondary: string;
+  /** What the Copy button writes. */
+  copy: string;
+}
+
+export function rulerSetup(): Promise<RulerSetup> {
+  return invoke<RulerSetup>("ruler_setup");
+}
+
+export function rulerMeasurementText(
+  measurement: RulerMeasurement,
+  units: string,
+  format: string,
+  dpi: number,
+): Promise<RulerReadout> {
+  return invoke<RulerReadout>("ruler_measurement_text", { measurement, units, format, dpi });
+}
+
+/** A bare pixel length — a guide's position — in the chosen units. */
+export function rulerLengthText(px: number, units: string, dpi: number): Promise<string> {
+  return invoke<string>("ruler_length_text", { px, units, dpi });
+}
+
+/** Copies the measurement to the clipboard and history; resolves with the text. */
+export function rulerCopyMeasurement(
+  measurement: RulerMeasurement,
+  units: string,
+  format: string,
+  dpi: number,
+): Promise<string> {
+  return invoke<string>("ruler_copy_measurement", { measurement, units, format, dpi });
+}
+
+/** Makes the overlay click-through, or gives the clicks back. */
+export function rulerSetLocked(locked: boolean): Promise<void> {
+  return invoke("ruler_set_locked", { locked });
+}
+
+/** Closes the ruler and releases anything a lock took over. */
+export function rulerClose(): Promise<void> {
+  return invoke("ruler_close");
+}
+
 export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
   return invoke<Settings>("update_settings", { patch });
 }

@@ -130,6 +130,9 @@ pub fn apply_theme_background<R: Runtime>(app: &AppHandle<R>) {
     for window in app.webview_windows().values() {
         match window.label() {
             RECORD_AREA_LABEL | RECORD_BAR_LABEL | COUNTDOWN_LABEL => continue,
+            // The macOS ruler is transparent on purpose: painting the theme
+            // behind it would turn the overlay into a sheet of colour.
+            crate::ruler::RULER_LABEL => continue,
             _ => {}
         }
         if let Err(e) = window.set_background_color(Some(color)) {
