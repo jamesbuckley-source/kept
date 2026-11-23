@@ -33,7 +33,7 @@ pub fn target() -> Option<isize> {
 
 /// X11 has no window handles to hold onto, so the port drives `xdotool` for the
 /// few things Windows does through `user32`.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) fn xdotool(args: &[&str]) -> Result<String> {
     let output = std::process::Command::new("xdotool")
         .args(args)
@@ -50,7 +50,7 @@ pub(crate) fn xdotool(args: &[&str]) -> Result<String> {
 }
 
 /// The X11 window that owns the input focus, if there is one.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn active_window() -> Option<isize> {
     xdotool(&["getactivewindow"])
         .ok()?
@@ -78,8 +78,29 @@ pub fn capture_foreground(own_window: Option<isize>) {
     TARGET.store(window.0 as isize, Ordering::Relaxed);
 }
 
+/// Records the application in front, which is what a paste reactivates.
+///
+/// macOS hands out a process id rather than a window: reactivating an application
+/// brings back the window the user was working in, and `CGEventPost` types into
+/// whatever is frontmost when the keystroke arrives.
+#[cfg(target_os = "macos")]
+pub fn capture_foreground(_own_window: Option<isize>) {
+    if let Some(target) = frontmost_target(Some(std::process::id() as isize)) {
+        TARGET.store(target, Ordering::Relaxed);
+    }
+}
+
+/// The frontmost process id, unless it is one of ours.
+#[cfg(target_os = "macos")]
+fn frontmost_target(own: impl IntoIterator<Item = isize>) -> Option<isize> {
+    let pid = crate::macos_clipboard::frontmost_pid()? as isize;
+    // Our own process in front means the user is inside Kept already, and pasting
+    // into our own window would be worse than leaving the last target alone.
+    (!own.into_iter().any(|own| own == pid)).then_some(pid)
+}
+
 /// The X11 focus owner stands in for Windows' foreground window.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_foreground(_own_window: Option<isize>) {
     if let Some(window) = active_window() {
         TARGET.store(window, Ordering::Relaxed);
@@ -104,7 +125,16 @@ pub fn capture_foreground_excluding(own: &[isize]) {
     TARGET.store(window.0 as isize, Ordering::Relaxed);
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn capture_foreground_excluding(own: &[isize]) {
+    let mut excluded = own.to_vec();
+    excluded.push(std::process::id() as isize);
+    if let Some(target) = frontmost_target(excluded) {
+        TARGET.store(target, Ordering::Relaxed);
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub fn capture_foreground_excluding(_own: &[isize]) {
     if let Some(window) = active_window() {
         TARGET.store(window, Ordering::Relaxed);
@@ -134,7 +164,28 @@ pub fn activate(handle: isize) -> bool {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+pub fn activate(handle: isize) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+
+    // A process id rather than a window: reactivating the application puts back
+    // whichever window it was showing.
+    let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(handle as i32)
+    else {
+        return false;
+    };
+    // The ignoring-other-apps flag is deprecated in macOS 14, where activation
+    // became cooperative and applications are expected to ask rather than take —
+    // but Kept is the frontmost application at this moment, so the request is
+    // granted, and the flag is still what macOS 11 through 13 need.
+    // SAFETY: activating another application is a plain call with no ownership.
+    unsafe {
+        app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps)
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub fn activate(handle: isize) -> bool {
     xdotool(&["windowactivate", "--sync", &handle.to_string()]).is_ok()
 }
@@ -147,7 +198,12 @@ fn foreground_is(handle: isize) -> bool {
     unsafe { GetForegroundWindow().0 as isize == handle }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn foreground_is(handle: isize) -> bool {
+    crate::macos_clipboard::frontmost_pid() == Some(handle as i32)
+}
+
+#[cfg(target_os = "linux")]
 fn foreground_is(handle: isize) -> bool {
     active_window() == Some(handle)
 }
@@ -210,7 +266,24 @@ fn clear_modifiers() {
     }
 }
 
-#[cfg(not(windows))]
+/// Releases Shift, Control, Option and Command, so a held chord cannot modify
+/// the paste. A key-up for a key that is not down is a no-op.
+#[cfg(target_os = "macos")]
+fn clear_modifiers() {
+    for key in [
+        cg::KEY_COMMAND,
+        cg::KEY_SHIFT,
+        cg::KEY_RIGHT_SHIFT,
+        cg::KEY_CONTROL,
+        cg::KEY_RIGHT_CONTROL,
+        cg::KEY_OPTION,
+        cg::KEY_RIGHT_OPTION,
+    ] {
+        cg::release_key(key);
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn clear_modifiers() {}
 
 /// Synthesises a Ctrl+V keystroke into the foreground window.
@@ -266,7 +339,18 @@ pub fn send_backspaces(count: usize) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn send_backspaces(count: usize) -> Result<()> {
+    if !crate::macos_permissions::accessibility_granted() {
+        return Err(crate::macos_permissions::accessibility_denied());
+    }
+    for _ in 0..count.clamp(1, 8) {
+        cg::press(cg::KEY_DELETE);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 pub fn send_backspaces(count: usize) -> Result<()> {
     let count = count.clamp(1, 8).to_string();
     xdotool(&[
@@ -326,9 +410,114 @@ pub fn take_foreground(handle: isize) -> bool {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn take_foreground(handle: isize) -> bool {
+    // macOS has no foreground lock to work around: activating the application puts
+    // its window in front and gives it the keyboard.
+    activate(handle)
+}
+
+#[cfg(target_os = "linux")]
 pub fn take_foreground(handle: isize) -> bool {
     activate(handle)
+}
+
+/// The handful of CoreGraphics calls a synthetic keystroke needs.
+///
+/// Declared here rather than pulling in `objc2-core-graphics`: three functions,
+/// two flags and the key codes is everything auto-paste uses, and the C ABI for
+/// them has not moved since 10.4.
+#[cfg(target_os = "macos")]
+mod cg {
+    use std::ffi::c_void;
+
+    /// `kCGHIDEventTap`: the tap that sits closest to the keyboard.
+    const HID_EVENT_TAP: u32 = 0;
+    /// `kCGEventSourceStateHIDSystemState`.
+    const HID_SYSTEM_STATE: u32 = 1;
+    const FLAG_COMMAND: u64 = 0x0010_0000;
+
+    /// `kVK_ANSI_V`.
+    pub const KEY_V: u16 = 9;
+    /// `kVK_Delete`, which is the Backspace key on a Mac keyboard.
+    pub const KEY_DELETE: u16 = 51;
+    pub const KEY_COMMAND: u16 = 55;
+    pub const KEY_SHIFT: u16 = 56;
+    pub const KEY_OPTION: u16 = 58;
+    pub const KEY_CONTROL: u16 = 59;
+    pub const KEY_RIGHT_SHIFT: u16 = 60;
+    pub const KEY_RIGHT_OPTION: u16 = 61;
+    pub const KEY_RIGHT_CONTROL: u16 = 62;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGEventCreateKeyboardEvent(
+            source: *mut c_void,
+            virtual_key: u16,
+            key_down: bool,
+        ) -> *mut c_void;
+        fn CGEventSetFlags(event: *mut c_void, flags: u64);
+        fn CGEventPost(tap: u32, event: *mut c_void);
+        fn CGEventSourceCreate(state: u32) -> *mut c_void;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFRelease(item: *const c_void);
+    }
+
+    /// Posts one key event and releases it again.
+    fn post(source: *mut c_void, key: u16, down: bool, flags: u64) -> bool {
+        // SAFETY: every object created here is released below, and the event pair
+        // is posted once.
+        unsafe {
+            let event = CGEventCreateKeyboardEvent(source, key, down);
+            if event.is_null() {
+                return false;
+            }
+            CGEventSetFlags(event, flags);
+            CGEventPost(HID_EVENT_TAP, event);
+            CFRelease(event);
+        }
+        true
+    }
+
+    /// Presses and releases `key`, with no modifier held.
+    pub fn press(key: u16) -> bool {
+        keystroke(key, 0)
+    }
+
+    /// Presses and releases `key` with Command held, which is ⌘V and friends.
+    pub fn command(key: u16) -> bool {
+        keystroke(key, FLAG_COMMAND)
+    }
+
+    /// Releases `key` on its own, for dropping a modifier the user is still holding.
+    pub fn release_key(key: u16) -> bool {
+        // SAFETY: the source is released below.
+        let source = unsafe { CGEventSourceCreate(HID_SYSTEM_STATE) };
+        let posted = post(source, key, false, 0);
+        // SAFETY: the source came from the call above; a null source is not a
+        // resource and must not be released.
+        unsafe {
+            if !source.is_null() {
+                CFRelease(source);
+            }
+        }
+        posted
+    }
+
+    fn keystroke(key: u16, flags: u64) -> bool {
+        // SAFETY: the source, and the two events it creates, are released below.
+        unsafe {
+            let source = CGEventSourceCreate(HID_SYSTEM_STATE);
+            let posted = post(source, key, true, flags) && post(source, key, false, flags);
+            if !source.is_null() {
+                CFRelease(source);
+            }
+            posted
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -356,7 +545,21 @@ fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {    // Supplying the scan
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn send_paste() -> Result<()> {
+    // Posting into another application is exactly what the Accessibility grant is
+    // for; without it macOS silently ignores the event, so it is checked first and
+    // named plainly.
+    if !crate::macos_permissions::accessibility_granted() {
+        return Err(crate::macos_permissions::accessibility_denied());
+    }
+    if !cg::command(cg::KEY_V) {
+        return Err(AppError::msg("macOS refused the paste keystroke"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 pub fn send_paste() -> Result<()> {
     // `--clearmodifiers` takes the place of `clear_modifiers`: xdotool drops the
     // chord the user is still holding before it types Ctrl+V.
@@ -368,11 +571,9 @@ pub fn send_paste() -> Result<()> {
     xdotool(&["key", "--clearmodifiers", "ctrl+v"]).map(|_| ())
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
-
-    #[cfg(windows)]
     #[test]
     fn key_input_marks_key_up_events() {
         // SAFETY: reading back the union fields we just initialised.

@@ -197,11 +197,8 @@ fn recognize(png: &[u8]) -> std::result::Result<String, Box<dyn std::error::Erro
     // Accurate is the slower model, and the one that reads small interface text.
     // Language correction joins a line the screenshot wrapped, which is what a
     // reader of the extracted text wants.
-    // SAFETY: both setters are plain property writes on a request this call owns.
-    unsafe {
-        request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
-        request.setUsesLanguageCorrection(true);
-    }
+    request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
+    request.setUsesLanguageCorrection(true);
     // A text request reaches `VNRequest` through `VNImageBasedRequest`, so the
     // cast up the chain takes two steps.
     let base: Retained<VNRequest> =
