@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { createTextClip, errorMessage } from "../lib/ipc";
+import { isMac } from "../lib/platform";
 import { MarkdownToolbar } from "./MarkdownToolbar";
 
 /**
@@ -80,7 +81,9 @@ export function AddClipForm() {
       )}
 
       <footer className="flex shrink-0 items-center gap-2 border-t border-edge px-3 py-2">
-        <span className="mr-auto text-[10px] text-ink-faint">Ctrl+Enter to save</span>
+        <span className="mr-auto text-[10px] text-ink-faint">
+          {isMac ? "⌘⏎ to save" : "Ctrl+Enter to save"}
+        </span>
         <button
           type="button"
           onClick={close}

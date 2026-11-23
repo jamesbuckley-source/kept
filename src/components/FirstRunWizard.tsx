@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { errorMessage, detectKeptCraft, validateHotkey } from "../lib/ipc";
+import { isMac } from "../lib/platform";
 import type { Settings, ThemeMode } from "../lib/types";
 import { CaptureModeField } from "./CaptureModeField";
 import { HotkeyField, Row, Toggle } from "./SettingsPanel";
@@ -385,7 +386,7 @@ export function FirstRunWizard({
         aria-labelledby="setup-title"
         className="flex min-h-0 w-full flex-col bg-panel"
       >
-        <div className="flex items-center gap-2 border-b border-edge-soft px-5 py-3">
+        <div data-drag-window className="flex items-center gap-2 border-b border-edge-soft px-5 py-3">
           <div className="min-w-0 flex-1">
             <h2 id="setup-title" className="text-[13px] font-semibold text-ink">
               Set up Kept
@@ -428,11 +429,19 @@ export function FirstRunWizard({
             <>
               <StepTitle
                 title="Activation"
-                hint="The shortcut that summons the window from anywhere. It must be unique across Windows."
+                hint={
+                  isMac
+                    ? "The shortcut that summons the window from anywhere. It must be unique across macOS."
+                    : "The shortcut that summons the window from anywhere. It must be unique across Windows."
+                }
               />
               <Row
                 label="Global hotkey"
-                hint="Written with a plus sign, for example Alt+V or Ctrl+Shift+V."
+                hint={
+                  isMac
+                    ? "Written with a plus sign, for example Super+Shift+V; Super is the Command key."
+                    : "Written with a plus sign, for example Alt+V or Ctrl+Shift+V."
+                }
                 control={<HotkeyField value={settings.hotkey} onCommit={setHotkey} />}
               />
               <Row
@@ -447,30 +456,38 @@ export function FirstRunWizard({
                 }
               />
               <Row
-                label="Start with Windows"
+                label={isMac ? "Start at login" : "Start with Windows"}
                 hint="Runs quietly in the tray from sign-in and captures every copy."
                 control={
                   <Toggle
-                    label="Start with Windows"
+                    label={isMac ? "Start at login" : "Start with Windows"}
                     checked={launchAtLogin}
                     onChange={setLaunchAtLogin}
                   />
                 }
               />
-              <Row
-                label="Print Screen captures"
-                hint="Takes the key from the Snipping Tool and runs the default capture below. Turning it off later puts Windows back exactly as it was."
-                control={
-                  <Toggle
-                    label="Print Screen captures"
-                    checked={printScreen}
-                    onChange={setPrintScreen}
-                  />
-                }
-              />
+              {/* Print Screen belongs to Windows: there is no such key on a Mac, so
+                  the row would offer a setting that can never do anything. */}
+              {!isMac && (
+                <Row
+                  label="Print Screen captures"
+                  hint="Takes the key from the Snipping Tool and runs the default capture below. Turning it off later puts Windows back exactly as it was."
+                  control={
+                    <Toggle
+                      label="Print Screen captures"
+                      checked={printScreen}
+                      onChange={setPrintScreen}
+                    />
+                  }
+                />
+              )}
               <Row
                 label="Default capture"
-                hint="What Print Screen and the header's capture button start."
+                hint={
+                  isMac
+                    ? "What the header's capture button starts."
+                    : "What Print Screen and the header's capture button start."
+                }
                 control={
                   <CaptureModeField
                     label="Default capture type"
@@ -490,7 +507,11 @@ export function FirstRunWizard({
               />
               <Row
                 label="Paste automatically"
-                hint="Sends Ctrl+V to the window you were in after you pick a clip."
+                hint={
+                  isMac
+                    ? "Sends Command+V to the window you were in after you pick a clip."
+                    : "Sends Ctrl+V to the window you were in after you pick a clip."
+                }
                 control={
                   <Toggle
                     label="Paste automatically"

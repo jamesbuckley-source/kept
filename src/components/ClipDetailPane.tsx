@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { formatBytes, formatCount, formatDuration, formatRelative, clipFullImageUrl, clipMotionUrl, clipLabel, leafName, shortenMiddle } from "../lib/format";
 import { clipLength, mediaUrl } from "../lib/ipc";
+import { isMac } from "../lib/platform";
 import type { ClipDetail, ClipSummary, Collection } from "../lib/types";
 import { useSectionOrder, type SectionHandle } from "../lib/sectionOrder";
 import { AnimatedImage } from "./AnimatedImage";
@@ -355,7 +356,9 @@ function NoteEditor({
         className="w-full resize-y rounded border border-edge bg-panel-2 px-2 py-1.5 text-[11px] leading-relaxed text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
       />
       <p className="text-[10px] leading-relaxed text-ink-faint">
-        Saved when you leave the field, or with Ctrl+Enter. Notes are searchable.
+        {isMac
+          ? "Saved when you leave the field, or with ⌘⏎. Notes are searchable."
+          : "Saved when you leave the field, or with Ctrl+Enter. Notes are searchable."}
       </p>
     </div>
   );
@@ -417,7 +420,9 @@ function EditableText({
           className="min-h-28 w-full resize-y rounded border border-accent-dim bg-panel-2 p-2 font-mono text-[11px] leading-relaxed text-ink focus:outline-none"
         />
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[10px] text-ink-faint">Ctrl+Enter saves · Esc cancels</span>
+          <span className="text-[10px] text-ink-faint">
+            {isMac ? "⌘⏎ saves · Esc cancels" : "Ctrl+Enter saves · Esc cancels"}
+          </span>
           <div className="flex gap-1">
             <button
               type="button"

@@ -22,7 +22,13 @@ fn transparency_available() -> bool {
     {
         true
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        // Cocoa always composites, so the transparent surfaces the overlays and the
+        // countdown ask for are blended there.
+        true
+    }
+    #[cfg(target_os = "linux")]
     {
         // `_NET_WM_CM_S0` is the EWMH way to name the compositing manager for
         // screen 0; it is absent when nothing is blending.
@@ -257,7 +263,7 @@ pub fn open_wizard<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         let _ = existing.set_focus();
         return Ok(());
     }
-    let window = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         LABEL,
         // Same reason as the settings window: say which window this is in the URL.
@@ -270,8 +276,14 @@ pub fn open_wizard<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     .maximizable(false)
     .background_color(theme_background(app))
     .always_on_top(always_on_top(app))
-    .center()
-    .build()?;
+    .center();
+    // macOS paints its own light title bar above the page's dark header, leaving a
+    // lone red button beside the page's own close control. There the header is the
+    // title bar — it carries the drag handle — and the frame is dropped. Windows
+    // keeps the frame it has always had.
+    #[cfg(target_os = "macos")]
+    let builder = builder.decorations(false);
+    let window = builder.build()?;
     let _ = window.set_focus();
     Ok(())
 }
@@ -895,7 +907,7 @@ fn open_countdown<R: Runtime>(app: &AppHandle<R>, seconds: u32) -> tauri::Result
     // corners outside it are transparent; on a bare X session there is nothing to
     // blend them, and the whole square shows. Cutting the window itself down to the
     // ring leaves the desktop visible in the corners either way.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     if !transparency_available() {
         round_window(COUNTDOWN_TITLE);
     }
@@ -908,7 +920,7 @@ fn open_countdown<R: Runtime>(app: &AppHandle<R>, seconds: u32) -> tauri::Result
 /// Only worth doing where transparency is unavailable: with a compositor the ARGB
 /// corners are already smooth, and a hard X11 shape would only take the
 /// antialiasing away.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn round_window(title: &str) {
     match cut_to_circle(title) {
         Ok(()) => log::debug!("rounded the {title} window off"),
@@ -919,7 +931,7 @@ fn round_window(title: &str) {
 
 /// The SHAPE work behind [`round_window`]: a one-bit mask holding a filled circle
 /// becomes the window's boundary.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn cut_to_circle(title: &str) -> Result<(), Box<dyn std::error::Error>> {
     use x11rb::connection::Connection;
     use x11rb::protocol::shape::{self, ConnectionExt as _};
@@ -963,7 +975,7 @@ fn cut_to_circle(title: &str) -> Result<(), Box<dyn std::error::Error>> {
 /// The X11 id of the window with exactly `title`, waiting for it to be created and
 /// mapped. Searched through the window tree so it does not depend on `xdotool` or on
 /// the window manager reparenting it under a frame.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn window_id_by_title(title: &str) -> Result<u32, Box<dyn std::error::Error>> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -987,7 +999,7 @@ fn window_id_by_title(title: &str) -> Result<u32, Box<dyn std::error::Error>> {
 
 /// Walks the window tree from `window` and returns the id of a window whose name is
 /// exactly `title`.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn find_window_by_title(
     conn: &impl x11rb::connection::Connection,
     window: u32,
@@ -1016,7 +1028,7 @@ fn find_window_by_title(
 }
 
 /// True when the X11 window's name is exactly `title`.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn window_name_matches(
     conn: &impl x11rb::connection::Connection,
     window: u32,
