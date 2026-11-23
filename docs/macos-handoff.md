@@ -37,6 +37,7 @@ the CI artifact is the only view.
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
 | Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
+| Colour picker | **Works** — `NSColorSampler` puts up the system magnifier, which needs no Screen Recording grant; the answer is converted to sRGB before it is stored |
 
 Code lives in `src-tauri/src/macos_clipboard.rs` plus the `#[cfg(target_os = "macos")]`
 sections of `clipboard.rs` and `sound.rs`. Everything else still falls through to
@@ -45,25 +46,24 @@ the **Linux** implementation, which is why the log shows `maim`, `xdotool` and
 
 ## Not done — in the order worth doing
 
-1. **Colour picker** (`picker.rs`). `screencapture` sampling or `NSColorSampler`.
-2. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
+1. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
    Mac. Vision's `VNRecognizeTextRequest` (objc2-vision) is offline and needs no
    permission; `cargo test` covers the pure parts only.
-3. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
+2. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
    reactivating the previous `NSRunningApplication`, gated on the Accessibility
    TCC grant.
-4. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
+3. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
    existing "install ffmpeg" flow plus `-f avfoundation` input is the port.
    Region and window recording are still refused on macOS (`choose_region`,
    `choose_window`): ffmpeg records a screen, not a rectangle, until a selector
    reports one.
-5. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
+4. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
    it needs a window rectangle and a way to wheel it.
-6. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
+5. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
    no non-grabbing key recorder yet. It records the token and installs no hook.
-7. **Dock / app icon.** The `.icns` is older artwork than the current logo;
+6. **Dock / app icon.** The `.icns` is older artwork than the current logo;
    regenerate with `npm run tauri icon <source.png>`.
-8. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
+7. **"Show in taskbar"** should map to `NSApplicationActivationPolicy::Accessory`
    on macOS (`window::set_taskbar_visibility` is a no-op there today).
 
 ## How to verify a change
