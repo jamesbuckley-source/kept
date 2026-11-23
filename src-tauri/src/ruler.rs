@@ -359,11 +359,20 @@ pub fn open(app: tauri::AppHandle, settings: Settings) -> Result<()> {
     {
         platform::open(app, settings)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         let _ = (app, settings);
         Err(crate::error::AppError::msg(
             "the onscreen ruler is only available on Windows",
+        ))
+    }
+    // The ruler is a Win32 popup painted with GDI. macOS has no equivalent, so the
+    // arrow that opens it answers honestly instead of blaming Windows.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (app, settings);
+        Err(crate::error::AppError::msg(
+            "the onscreen ruler is not available on macOS yet",
         ))
     }
 }
