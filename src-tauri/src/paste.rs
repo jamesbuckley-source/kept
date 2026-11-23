@@ -219,7 +219,15 @@ pub fn restore_and_paste(handle: isize, delay_ms: u64) -> Result<()> {
     // settled on, and the window that just closed leaves the answer stale for a
     // moment, so the activation is what makes the keystroke land where the user
     // was typing rather than wherever the last window was.
-    if !foreground_is(handle) || cfg!(not(windows)) {
+    //
+    // macOS asks only when the target is not already in front: activation is
+    // cooperative there, and re-activating the application that is already active
+    // is a needless report of failure if AppKit declines to answer.
+    #[cfg(target_os = "linux")]
+    let needs_activation = true;
+    #[cfg(not(target_os = "linux"))]
+    let needs_activation = !foreground_is(handle);
+    if needs_activation {
         if !activate(handle) {
             return Err(AppError::msg(
                 "the window you copied from is no longer available",

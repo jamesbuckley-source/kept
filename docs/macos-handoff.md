@@ -13,7 +13,7 @@ Last updated 2026-11-23.
 |---|---|
 | Test Mac | MacinCloud `NY702.macincloud.com`, user `user956782`, macOS 26.2, arm64, 8 cores / 16 GB |
 | SSH | `ssh -i ~/.ssh/kept_macincloud_ed25519 user956782@NY702.macincloud.com` (key-only; the Mac password is not needed) |
-| Repo on the Mac | `~/kept`, a shallow clone of the branch |
+| Repo on the Mac | `~/kept`, a shallow clone of the branch, kept at the branch tip (`git fetch --depth 1 origin <branch> && git reset --hard FETCH_HEAD`) so a file the dev loop has not copied yet is never a stale *branch* as well as a stale copy |
 | Toolchain there | Node 22 in `~/.local/node`, cargo in `~/.cargo`, full Xcode, no Homebrew |
 | Rebuild loop | `pwsh ./scripts/mac-dev.ps1` from the Windows checkout: copies changed files, builds the debug bundle, reopens it. `-Once` for a single pass |
 | CI | `.github/workflows/ci.yml` on `macos-latest`: tests, bundles, launches the app, screenshots it, uploads `Kept-macos-gui` |
@@ -101,6 +101,10 @@ browser in the RDP session.
 - `open` over SSH fails with `RBSRequestErrorDomain Code=5` while the console
   belongs to another user (the MacinCloud box has three). `who -u` says whose
   session is on the console; retry when it is `user956782` again.
+- The Mac's `~/kept` was found reverted to its old checkout more than once
+  (`Cargo.toml` lost its macOS dependencies while the sources beside it stayed
+  new). The clone is now reset to the branch tip, so a reset costs nothing that
+  the push has not already carried.
 - `ssh-keygen -N '""'` in PowerShell stores the literal characters `""` as the
   passphrase, and the client then never signs with the key even though the server
   says `Server accepts key`.
