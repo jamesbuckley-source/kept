@@ -29,7 +29,11 @@ mod media_cache;
 #[cfg(not(windows))]
 mod media_server;
 #[cfg(target_os = "macos")]
+mod macos_capture;
+#[cfg(target_os = "macos")]
 mod macos_clipboard;
+#[cfg(target_os = "macos")]
+mod macos_permissions;
 mod models;
 mod ocr;
 mod palette;
@@ -156,6 +160,8 @@ pub fn run() {
     commands::capture_previous_area,
     commands::capture_scrolling_window,
     commands::cancel_capture_delay,
+    commands::permissions,
+    commands::request_permission,
     commands::open_record_bar,
     commands::record_toolchain,
     commands::install_ffmpeg,
@@ -289,6 +295,23 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     legacy::migrate_from_copypaste(&default_dir);
     let data_dir = storage::active_dir(&default_dir);
     log::info!("data directory: {}", data_dir.display());
+    // Says up front whether the screenshot tools and auto-paste can work, so a
+    // user reporting "nothing happens" can be answered from the log rather than
+    // by guessing at System Settings.
+    #[cfg(target_os = "macos")]
+    log::info!(
+        "macOS permissions: screen recording {}, accessibility {}",
+        if macos_permissions::screen_recording_granted() {
+            "granted"
+        } else {
+            "not granted"
+        },
+        if macos_permissions::accessibility_granted() {
+            "granted"
+        } else {
+            "not granted"
+        }
+    );
 
     let store = Arc::new(Store::open(&data_dir)?);
     // A move completed on the previous run: the old copy is no longer in use.

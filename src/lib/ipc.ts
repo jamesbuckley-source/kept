@@ -128,6 +128,28 @@ export function captureScrollingWindow(): Promise<void> {
   return invoke("capture_scrolling_window");
 }
 
+/** The macOS privacy grants the capture and paste features need. */
+export interface MacosPermissions {
+  macos: boolean;
+  screenRecording: boolean;
+  accessibility: boolean;
+}
+
+/** Which grants Kept holds; every one reads true off macOS. */
+export function permissions(): Promise<MacosPermissions> {
+  return invoke<MacosPermissions>("permissions");
+}
+
+/**
+ * Asks for one grant: the system prompt where there is one, and the settings
+ * pane where the switch is the only way in.
+ */
+export function requestPermission(
+  grant: "screenRecording" | "accessibility",
+): Promise<MacosPermissions> {
+  return invoke<MacosPermissions>("request_permission", { grant });
+}
+
 /** Shows the screen-recording toolbar, where a recording is started. */
 export function openRecordBar(): Promise<void> {
   return invoke("open_record_bar");

@@ -93,7 +93,7 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
 /// first and the click is taken with `xdotool`'s crosshair: the pixel under the
 /// pointer when it returns is the one that was clicked, which is where the Windows
 /// picker's click would have landed. Escape cancels.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     use crate::models::ClipContent;
 
@@ -118,8 +118,14 @@ pub fn pick(app: &AppHandle) -> Result<Option<String>> {
     Ok(hex_at(&rgba, width, height, x, y))
 }
 
+/// Placeholder until the AppKit sampler lands.
+#[cfg(target_os = "macos")]
+pub fn pick(_app: &AppHandle) -> Result<Option<String>> {
+    Err(AppError::msg("the colour picker is not available on macOS yet"))
+}
+
 /// Where the pointer was when the user clicked to pick.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn clicked_point() -> Result<Option<(i64, i64)>> {
     if crate::capture::selected_window()?.is_none() {
         return Ok(None);
@@ -129,7 +135,7 @@ fn clicked_point() -> Result<Option<(i64, i64)>> {
 }
 
 /// Reads `X=…` / `Y=…` out of `xdotool getmouselocation --shell`.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn pointer_position(report: &str) -> Option<(i64, i64)> {
     let mut x = None;
     let mut y = None;
@@ -874,7 +880,7 @@ mod tests {
         );
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_pointer_is_read_from_the_shell_report() {
         let report = "WINDOW=1234\nSCREEN=0\nX=640\nY=360\n";

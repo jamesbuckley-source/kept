@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { errorMessage, detectKeptCraft, validateHotkey } from "../lib/ipc";
+import { permissions, requestPermission, type MacosPermissions } from "../lib/ipc";
 import { isMac } from "../lib/platform";
 import type { Settings, ThemeMode } from "../lib/types";
 import { CaptureModeField } from "./CaptureModeField";
@@ -161,6 +162,95 @@ function StepTitle({ title, hint }: { title: string; hint: string }) {
       <h2 className="text-[13px] font-semibold text-ink">{title}</h2>
       <p className="mt-0.5 text-[11px] leading-relaxed text-ink-faint">{hint}</p>
     </div>
+  );
+}
+
+/**
+ * The two system grants macOS needs, and the button that asks for each.
+ *
+ * macOS applies an answer without restarting the app, so the state is re-read
+ * after the button is pressed: a wizard that never refreshed would keep saying
+ * "not granted" after the user had already allowed it.
+ */
+function MacosPermissionsBlock() {
+  const [grants, setGrants] = useState<MacosPermissions | null>(null);
+
+  useEffect(() => {
+    if (!isMac) return;
+    let live = true;
+    permissions()
+      .then((next) => {
+        if (live) setGrants(next);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!isMac || !grants?.macos) return null;
+
+  const allow = (grant: "screenRecording" | "accessibility") => {
+    requestPermission(grant)
+      .then(setGrants)
+      .catch(() => {});
+  };
+
+  return (
+    <div className="py-2">
+      <p className="text-[12px] text-ink-dim">macOS permissions</p>
+      <p className="mt-0.5 text-[10px] leading-relaxed text-ink-faint">
+        macOS only lets an app use these after you say so. Both can be changed later in
+        System Settings → Privacy &amp; Security.
+      </p>
+      <div className="mt-1.5 flex flex-col gap-1.5">
+        <Row
+          label="Screen Recording"
+          hint="Screenshots, the colour picker and screen recording read the screen."
+          control={
+            <GrantButton
+              granted={grants.screenRecording}
+              label="Screen Recording"
+              onAllow={() => allow("screenRecording")}
+            />
+          }
+        />
+        <Row
+          label="Accessibility"
+          hint="Pasting for you and typing :: in another app press keys on your behalf."
+          control={
+            <GrantButton
+              granted={grants.accessibility}
+              label="Accessibility"
+              onAllow={() => allow("accessibility")}
+            />
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+function GrantButton({
+  granted,
+  label,
+  onAllow,
+}: {
+  granted: boolean;
+  label: string;
+  onAllow: () => void;
+}) {
+  if (granted) {
+    return <span className="text-[10px] text-ink-faint">Granted</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onAllow}
+      className="rounded border border-edge bg-panel-2 px-2 py-1 text-[10px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink"
+    >
+      Allow {label}…
+    </button>
   );
 }
 
@@ -505,6 +595,7 @@ export function FirstRunWizard({
                 title="Paste & privacy"
                 hint="Choose what gets recorded and how clips come back out."
               />
+              <MacosPermissionsBlock />
               <Row
                 label="Paste automatically"
                 hint={

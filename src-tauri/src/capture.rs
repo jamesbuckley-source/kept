@@ -604,9 +604,23 @@ fn hides_for_capture(app: &AppHandle) -> bool {
     hidden
 }
 
+/// Hides the app and captures every display as one picture.
+///
+/// The system's screenshot tool does the work, so there is no selector here and
+/// the countdown simply runs before the shutter.
+#[cfg(target_os = "macos")]
+pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, |clock| {
+        if !clock.wait() {
+            return Ok(None);
+        }
+        crate::macos_capture::screen().map(Some)
+    })
+}
+
 /// Hides the app and captures the whole desktop in one image, the X11 way:
 /// `maim` reads the root window, which is every screen at once.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_screen(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     // Nothing to aim at, so the countdown simply runs before the shutter.
     with_app_hidden(app, delay, |clock| {
@@ -664,8 +678,22 @@ fn with_app_hidden<T>(
     result
 }
 
+/// Hides the app and returns the pixels of the rectangle the user framed.
+///
+/// macOS takes the picture the instant the drag ends, so a countdown here runs
+/// before the system selector instead of between the choice and the shutter.
+#[cfg(target_os = "macos")]
+pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, |clock| {
+        if !clock.wait() {
+            return Ok(None);
+        }
+        crate::macos_capture::region()
+    })
+}
+
 /// Reads the root window into an RGBA clip.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) fn grab_desktop() -> Result<ClipContent> {
     grab_maim(&[])?.ok_or_else(|| AppError::msg("maim did not produce a picture"))
 }
@@ -677,7 +705,7 @@ pub(crate) fn grab_desktop() -> Result<ClipContent> {
 /// that only means anything once the area is known. `maim` takes its picture the
 /// instant the drag ends, so with a countdown the rectangle comes from `slop`,
 /// which only selects, and the shutter is a second read of that rectangle.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     with_app_hidden(app, delay, |clock| {
         if delay > 0 && pump::available() {
@@ -698,9 +726,23 @@ pub fn capture_region(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>
     })
 }
 
+/// Hides the app and captures the window the user clicks.
+///
+/// The system selector highlights the window under the pointer and takes it on
+/// the click, so there is nothing to insert a countdown into: it runs first.
+#[cfg(target_os = "macos")]
+pub fn capture_window(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    with_app_hidden(app, delay, |clock| {
+        if !clock.wait() {
+            return Ok(None);
+        }
+        crate::macos_capture::window()
+    })
+}
+
 /// Hides the app, turns the pointer into a crosshair with `xdotool`, and captures
 /// the window that was clicked once any countdown has run out.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_window(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     with_app_hidden(app, delay, |clock| {
         let Some(id) = selected_window()? else {
@@ -721,7 +763,7 @@ pub fn capture_window(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>
 /// taking the picture in the same breath, which is what puts the choice before the
 /// countdown. It lives behind its own namespace so the capture reads as the two
 /// steps it is.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 mod pump {
     use crate::error::{AppError, Result};
 
@@ -756,7 +798,7 @@ mod pump {
 ///
 /// Escape leaves `xdotool` reporting a failed grab, which is a cancel rather than
 /// a fault.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) fn selected_window() -> Result<Option<String>> {
     let output = std::process::Command::new("xdotool")
         .arg("selectwindow")
@@ -773,7 +815,7 @@ pub(crate) fn selected_window() -> Result<Option<String>> {
 ///
 /// `Ok(None)` is a cancelled selection: maim removes the file and reports a failed
 /// grab when the user presses Escape.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn grab_maim(args: &[&str]) -> Result<Option<ClipContent>> {
     let path = std::env::temp_dir().join(format!("kept-shot-{}.png", uuid::Uuid::new_v4()));
     let output = std::process::Command::new("maim")
@@ -798,7 +840,7 @@ fn grab_maim(args: &[&str]) -> Result<Option<ClipContent>> {
     decode_png(&path).map(Some)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn decode_png(path: &std::path::Path) -> Result<ClipContent> {
     let frame = image::open(path).map(|frame| frame.to_rgba8()).map_err(|e| {
         AppError::msg(format!("could not read the capture from {}: {e}", path.display()))
@@ -812,7 +854,25 @@ fn decode_png(path: &std::path::Path) -> Result<ClipContent> {
     })
 }
 
-#[cfg(not(windows))]
+/// Hides the app and captures the area the last capture covered.
+///
+/// `screencapture` cannot report what an interactive selection covered, so the
+/// rectangle is worked out by finding the selection inside a picture of the
+/// desktop taken immediately before it (see [`crate::macos_capture`]).
+#[cfg(target_os = "macos")]
+pub fn capture_previous(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
+    let rect = crate::macos_capture::last_area().ok_or_else(|| {
+        AppError::msg("there is no previous capture area yet — take a screenshot first")
+    })?;
+    with_app_hidden(app, delay, |clock| {
+        if !clock.wait() {
+            return Ok(None);
+        }
+        crate::macos_capture::area(rect).map(Some)
+    })
+}
+
+#[cfg(target_os = "linux")]
 pub fn capture_previous(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
     Err(AppError::msg(
         "capturing the previous area is only supported on Windows",
@@ -835,10 +895,17 @@ pub fn choose_region(app: &AppHandle, fixed: Option<(i32, i32)>) -> Result<Optio
     region_choice(fixed)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn choose_region(_app: &AppHandle, _fixed: Option<(i32, i32)>) -> Result<Option<Rect>> {
     Err(AppError::msg(
         "recording a screen region is only supported on Windows",
+    ))
+}
+
+#[cfg(target_os = "macos")]
+pub fn choose_region(_app: &AppHandle, _fixed: Option<(i32, i32)>) -> Result<Option<Rect>> {
+    Err(AppError::msg(
+        "recording a region is not available on macOS yet — record the whole screen instead",
     ))
 }
 
@@ -852,20 +919,34 @@ pub fn choose_window(app: &AppHandle) -> Result<Option<Rect>> {
     pick_window().map(|target| target.map(|target| target.rect))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn choose_window(_app: &AppHandle) -> Result<Option<Rect>> {
     Err(AppError::msg(
         "recording a window is only supported on Windows",
     ))
 }
 
-/// Every monitor as one rectangle, in physical screen pixels.
+#[cfg(target_os = "macos")]
+pub fn choose_window(_app: &AppHandle) -> Result<Option<Rect>> {
+    Err(AppError::msg(
+        "recording a window is not available on macOS yet — record the whole screen instead",
+    ))
+}
+
+/// Every monitor as one rectangle.
+///
+/// Windows and X11 describe this in physical pixels; macOS describes it in
+/// points, because that is the space `screencapture` takes a rectangle in.
 pub fn desktop_bounds() -> Rect {
     #[cfg(windows)]
     {
         virtual_bounds()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_capture::desktop_bounds()
+    }
+    #[cfg(target_os = "linux")]
     {
         // One root window on X11, so its size is both the primary and the whole
         // desktop. `xdotool` is the cheapest way to ask the server.
@@ -1001,14 +1082,21 @@ impl Drop for RecordOutline {
 /// X11 routes the wheel to whatever is under the pointer, so the window does not
 /// have to be focusable: the pointer is parked over the page for each notch and
 /// taken away again before the frame is read.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub fn capture_scrolling(app: &AppHandle, delay: u32) -> Result<Option<ClipContent>> {
     // Hidden for the whole run, not just the pick: the frames come off the desktop,
     // so anything of ours over the window would be stitched into it.
     with_app_hidden(app, delay, scroll_target)
 }
+#[cfg(target_os = "macos")]
+pub fn capture_scrolling(_app: &AppHandle, _delay: u32) -> Result<Option<ClipContent>> {
+    Err(AppError::msg(
+        "a scrolling capture is not available on macOS yet — capture the window instead",
+    ))
+}
+
 /// A window to scroll, as X11 describes it.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 #[derive(Clone)]
 struct Target {
     /// The X11 window id, which is what `xdotool` drives and `maim` measures.
@@ -1021,7 +1109,7 @@ struct Target {
     title: String,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 impl Target {
     /// Best effort, and deliberately not `--sync`: the window that was clicked is
     /// often a browser's render widget rather than a top-level window, and waiting
@@ -1040,7 +1128,7 @@ impl Target {
 /// Picks a window, scrolls it a page at a time and stitches the frames into one
 /// tall image, the X11 way: frames come from `maim`, the wheel from `xdotool`, and
 /// the stitching from the same tested code the Windows build uses.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn scroll_target(clock: &Delay) -> Result<Option<ClipContent>> {
     let Some(target) = pick_scroll_window()? else {
         return Ok(None);
@@ -1106,7 +1194,7 @@ fn scroll_target(clock: &Delay) -> Result<Option<ClipContent>> {
 }
 
 /// Returns the window the user clicked, measured and named.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn pick_scroll_window() -> Result<Option<Target>> {
     let Some(id) = selected_window()? else {
         return Ok(None);
@@ -1600,12 +1688,12 @@ struct CursorPark {
 
 /// The same promise through `xdotool`: X11 has no way to move the pointer other
 /// than asking the server to warp it.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 struct CursorPark {
     original: Option<(i32, i32)>,
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 impl CursorPark {
     fn new(parked: (i32, i32)) -> Self {
         let original = crate::paste::xdotool(&["getmouselocation", "--shell"])
@@ -1616,7 +1704,7 @@ impl CursorPark {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 impl Drop for CursorPark {
     fn drop(&mut self) {
         if let Some(point) = self.original {
@@ -1626,7 +1714,7 @@ impl Drop for CursorPark {
 }
 
 /// Reads `X=…` / `Y=…` out of `xdotool getmouselocation --shell`.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn pointer_of(report: &str) -> Option<(i32, i32)> {
     let x = shell_int(report, "X")?;
     let y = shell_int(report, "Y")?;
@@ -1634,7 +1722,7 @@ fn pointer_of(report: &str) -> Option<(i32, i32)> {
 }
 
 /// Reads one `KEY=value` integer out of `xdotool --shell` output.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn shell_int(report: &str, key: &str) -> Option<i64> {
     report.lines().find_map(|line| {
         let value = line.trim().strip_prefix(key)?.strip_prefix('=')?;
@@ -1686,6 +1774,7 @@ enum Advance {
 /// yet is indistinguishable from the bottom of the page, so the three ways of
 /// scrolling are tried before the end is called. Escape is checked between the
 /// attempts, so a press ends the step it lands in instead of after the last one.
+#[cfg(any(windows, target_os = "linux"))]
 fn advance_page(
     target: &Target,
     centre: (i32, i32),
@@ -1735,7 +1824,7 @@ fn park_cursor(point: (i32, i32)) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn park_cursor(point: (i32, i32)) {
     if let Err(e) = crate::paste::xdotool(&["mousemove", &point.0.to_string(), &point.1.to_string()])
     {
@@ -1906,7 +1995,7 @@ fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
 
 /// The same read through `maim`: a window's own backing store can be a frame or
 /// two behind what the user is looking at, so the pixels come off the root window.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
     match grab_rect(target.content) {
         Ok((width, height, rgba)) => Some(trim_bottom(width, height, rgba)),
@@ -1918,7 +2007,7 @@ fn screen_frame(target: &Target) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 /// Reads a rectangle of the desktop into an RGBA buffer.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn grab_rect(rect: Rect) -> Result<(u32, u32, Vec<u8>)> {
     let width = rect.width().max(0);
     let height = rect.height().max(0);
@@ -1960,6 +2049,7 @@ fn grab_rect(rect: Rect) -> Result<(u32, u32, Vec<u8>)> {
 /// never moved, which is what the bottom of the page looks like. `keep_width` drops
 /// the scroll bar's columns as each frame is read, so everything downstream — the
 /// comparison, the measurement and the stitch — only ever sees page pixels.
+#[cfg(any(windows, target_os = "linux"))]
 fn settled_screen(
     target: &Target,
     previous: &[u8],
@@ -2036,7 +2126,7 @@ fn measure(previous: &[u8], frame: (u32, u32, Vec<u8>)) -> Option<u32> {
 
 /// Scrolls a focused window by a page with the keyboard, for windows that ignore
 /// both the wheel and the wheel message.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn page_down(_target: &Target, centre: (i32, i32)) {
     // The pointer has to be over the window for the key to land where the wheel
     // would have; focus is already on the target.
@@ -2053,7 +2143,7 @@ fn page_down(_target: &Target, centre: (i32, i32)) {
 /// The wheel is sent as real input rather than as an event addressed to the
 /// window: a toolkit that ignores synthetic events still handles XTEST, which is
 /// exactly what a mouse does.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn scroll_window(centre: (i32, i32)) -> u32 {
     park_cursor(centre);
     sleep_pumping(POINTER_SETTLE);
@@ -4395,7 +4485,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(all(test, target_os = "linux"))]
 mod linux_tests {
     use super::*;
 

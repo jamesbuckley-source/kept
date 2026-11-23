@@ -35,7 +35,7 @@ $sshArgs = @("-i", $Key, "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o"
 
 # Everything the build reads. `.git`, `node_modules`, `dist` and `src-tauri/target`
 # are left alone: they are large, and the Mac has its own.
-$watched = @("src", "src-tauri\src", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
+$watched = @("src", "src-tauri\src", "src-tauri\Cargo.toml", "index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
 
 function Send-Remote {
     param([string]$Script)

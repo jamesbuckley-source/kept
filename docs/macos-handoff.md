@@ -36,6 +36,7 @@ the CI artifact is the only view.
 | Shortcut labels | `src/lib/platform.ts` drives the hints; Print Screen rows are hidden on a Mac |
 | Hotkey defaults | `Super+Shift+V` summon, `Super+Alt+P` recording pause, `Super+Alt+V` paste stack |
 | Wizard chrome | Frameless on macOS with a drag handle in its header, 700 px tall |
+| Screen capture | **Region, window and full screen** go through `screencapture` (`-i`, `-w -o`, `-x`). The Screen Recording grant is checked, asked for once and explained otherwise; the wizard has an "Allow…" button for it. "Previous area" repeats the rectangle, which is worked out by locating the selection inside a picture of the desktop taken just before it |
 
 Code lives in `src-tauri/src/macos_clipboard.rs` plus the `#[cfg(target_os = "macos")]`
 sections of `clipboard.rs` and `sound.rs`. Everything else still falls through to
@@ -44,21 +45,20 @@ the **Linux** implementation, which is why the log shows `maim`, `xdotool` and
 
 ## Not done — in the order worth doing
 
-1. **Screen capture** (`capture.rs`). Region, window and full-screen all run the
-   Linux `maim`/`xdotool` path. The cheapest faithful port is the OS's own picker:
-   `screencapture -i -x <tmp>.png` for a region, `-w` for a window, `-x` for the
-   screen, then `image` (already a dependency) to RGBA. Needs Screen Recording
-   permission, which the app must ask for and the wizard should explain.
-2. **Colour picker** (`picker.rs`). Same shape: grab with `screencapture`, sample
-   the pixel, or use `NSColorSampler` for a native magnifier.
-3. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
+1. **Colour picker** (`picker.rs`). `screencapture` sampling or `NSColorSampler`.
+2. **OCR** (`ocr.rs`). Currently shells out to `tesseract`, which is not on the
    Mac. Vision's `VNRecognizeTextRequest` (objc2-vision) is offline and needs no
    permission; `cargo test` covers the pure parts only.
-4. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
+3. **Auto-paste** (`paste.rs`). `xdotool` today. Needs `CGEventPost` of ⌘V plus
    reactivating the previous `NSRunningApplication`, gated on the Accessibility
-   TCC grant, with a first-run explanation.
-5. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
+   TCC grant.
+4. **Screen recording** (`recorder.rs`). ffmpeg is not installed on the Mac; the
    existing "install ffmpeg" flow plus `-f avfoundation` input is the port.
+   Region and window recording are still refused on macOS (`choose_region`,
+   `choose_window`): ffmpeg records a screen, not a rectangle, until a selector
+   reports one.
+5. **Scrolling capture** (`capture.rs`) is refused on macOS for the same reason:
+   it needs a window rectangle and a way to wheel it.
 6. **The `::` popup** (`autocomplete.rs`). Deliberately inert on macOS: there is
    no non-grabbing key recorder yet. It records the token and installs no hook.
 7. **Dock / app icon.** The `.icns` is older artwork than the current logo;
@@ -89,6 +89,12 @@ browser in the RDP session.
 
 ## Traps found the hard way
 
+- `mac-dev.ps1` only copied the paths it watches; `Cargo.toml` was not one of
+  them, so a new macOS dependency built here and failed there with an unresolved
+  import. It is watched now.
+- `open` over SSH fails with `RBSRequestErrorDomain Code=5` while the console
+  belongs to another user (the MacinCloud box has three). `who -u` says whose
+  session is on the console; retry when it is `user956782` again.
 - `ssh-keygen -N '""'` in PowerShell stores the literal characters `""` as the
   passphrase, and the client then never signs with the key even though the server
   says `Server accepts key`.
