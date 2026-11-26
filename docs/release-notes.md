@@ -8,10 +8,22 @@ Kept can now be built and packaged for Linux (X11) as a **Beta**. Tagged release
 include Linux install artifacts (`.AppImage`, `.deb`, `.rpm`) alongside the Windows
 installer so end users can install Kept on Linux from the GitHub Releases page.
 
-Most functionality should work on Linux. **The onscreen ruler does not yet work on
-Linux** (it remains Windows-only for now); other capture, clipboard, tray, and
-recording features are available subject to the usual X11/desktop-environment
-limitations documented in `docker/README.md`.
+Most functionality should work on Linux, including the onscreen ruler; capture,
+clipboard, tray, and recording features are available subject to the usual
+X11/desktop-environment limitations documented in `docker/README.md`.
+
+## Onscreen ruler on Linux
+
+The ruler now opens on Linux as a transparent full-screen overlay that draws the
+same tools, snapping, readouts and keys as the Windows version.
+
+- **X11** behaves as described for Windows, including Esc to close.
+- **Wayland** also opens, but the compositor hands it no global keys, so a locked
+  ruler is released with the **Unlock** button it shows. Colour-edge snapping needs
+  a screenshot, which needs X11 (`maim`); window snapping sees XWayland windows only.
+- Sessions without a compositor paint the screenshot taken just before the ruler
+  opened as the overlay's backdrop, so it does not cover the screen with an opaque
+  rectangle.
 
 ## Linux fixes
 

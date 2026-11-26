@@ -840,6 +840,34 @@ fn grab_maim(args: &[&str]) -> Result<Option<ClipContent>> {
     decode_png(&path).map(Some)
 }
 
+/// The whole desktop as a PNG, for the ruler's pixel-edge snapping.
+///
+/// `None` when the grab could not happen (a Wayland session where `maim` cannot
+/// see the desktop, or an X server that refused): snapping is a nicety, so the
+/// ruler opens without it rather than failing.
+#[cfg(target_os = "linux")]
+pub fn screen_png() -> Result<Option<Vec<u8>>> {
+    let path = std::env::temp_dir().join(format!("kept-ruler-{}.png", uuid::Uuid::new_v4()));
+    let output = std::process::Command::new("maim")
+        // Without this maim super-imposes the pointer onto the picture.
+        .arg("--hidecursor")
+        .arg(&path)
+        .output()
+        .map_err(|e| AppError::msg(format!("maim is not available ({e}); install maim")))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&path);
+        log::info!(
+            "the ruler's snapshot was not available: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return Ok(None);
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|e| AppError::msg(format!("could not read the ruler snapshot: {e}")))?;
+    let _ = std::fs::remove_file(&path);
+    Ok(Some(bytes))
+}
+
 #[cfg(target_os = "linux")]
 fn decode_png(path: &std::path::Path) -> Result<ClipContent> {
     let frame = image::open(path).map(|frame| frame.to_rgba8()).map_err(|e| {

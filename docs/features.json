@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-23T02:34:39Z",
+  "updatedAt": "2026-11-26T22:13:22.412Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3858,6 +3858,23 @@
         "design"
       ],
       "updatedAt": "2026-11-23T02:34:39Z"
+    },
+    {
+      "id": "onscreen-ruler-on-linux",
+      "title": "Onscreen ruler on Linux",
+      "area": "Capture",
+      "status": "shipped",
+      "summary": "The ruler opens on Linux as a transparent full-screen webview painting the same tools, snapping, readouts and keys as the Windows GDI ruler: ruler.rs's linux module supplies the desktop snapshot, the X11 window list for snapping, click-through while locked and an RECORD-based Esc watcher, and src/components/Ruler.tsx paints the overlay. On X11 it behaves as it does on Windows; on Wayland the compositor hands it no global keys, so a locked ruler is released with the Unlock chip. Sessions without a compositor paint the pre-open screenshot as the overlay's backdrop.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/ruler.rs",
+        "src/components/Ruler.tsx",
+        "src/components/RulerUnlock.tsx",
+        "src-tauri/src/capture.rs",
+        "docker/README.md",
+        "README.md"
+      ],
+      "updatedAt": "2026-11-26T22:13:22.411Z"
     }
   ]
 }

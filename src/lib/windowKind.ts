@@ -24,30 +24,42 @@ export type WindowKind =
   | "record-bar"
   | "record-area"
   | "countdown"
+  | "ruler"
+  | "ruler-unlock"
   | "stack"
-  | "quick"
-  | "ruler";
+  | "quick";
 
 export function windowKind(): WindowKind {
   const fromUrl = new URLSearchParams(window.location.search).get("window");
   if (fromUrl === "settings" || fromUrl === "add-clip" || fromUrl === "sticky") return fromUrl;
   if (fromUrl === "wizard") return fromUrl;
   if (fromUrl === "whats-new") return fromUrl;
-  if (fromUrl === "record-bar" || fromUrl === "record-area" || fromUrl === "countdown") {
+  if (
+    fromUrl === "record-bar" ||
+    fromUrl === "record-area" ||
+    fromUrl === "countdown" ||
+    fromUrl === "ruler" ||
+    fromUrl === "ruler-unlock"
+  ) {
     return fromUrl;
   }
   if (fromUrl === "stack") return fromUrl;
   if (fromUrl === "quick") return fromUrl;
-  if (fromUrl === "ruler") return fromUrl;
 
   try {
     const label = getCurrentWindow().label;
     if (label === "settings" || label === "add-clip" || label === "stack") return label;
     if (label === "wizard") return label;
     if (label === "whats-new") return label;
-    if (label === "record-bar" || label === "record-area" || label === "countdown") return label;
+    if (
+      label === "record-bar" ||
+      label === "record-area" ||
+      label === "countdown" ||
+      label === "ruler" ||
+      label === "ruler-unlock"
+    )
+      return label;
     if (label === "quick") return label;
-    if (label === "ruler") return label;
     if (label.startsWith("sticky-")) return "sticky";
   } catch {
     // No Tauri internals: treat it as the main window, which is what a browser

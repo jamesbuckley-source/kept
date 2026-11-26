@@ -837,6 +837,15 @@ pub fn install_ffmpeg() -> Result<String> {
     ))
 }
 
+/// Linux installs come from the distribution, not from a command this app can
+/// run on the user's behalf.
+#[cfg(target_os = "linux")]
+pub fn install_ffmpeg() -> Result<String> {
+    Err(AppError::msg(
+        "Screen recording needs FFmpeg, which has to come from the package \n         manager on Linux: `sudo apt install ffmpeg` (or the equivalent for \n         your distribution). If it is installed somewhere else, set its path \n         in Settings → Screen recording.",
+    ))
+}
+
 /// The audio devices a DirectShow capture can be started with.
 #[cfg(windows)]
 pub fn audio_devices(ffmpeg: &Path) -> Vec<String> {

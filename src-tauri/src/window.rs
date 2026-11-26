@@ -17,7 +17,7 @@ use crate::models::{ClipDetail, ClipKind};
 /// as garbage, so the recording bar, the countdown and the frame would show
 /// fragments of themselves. Off Windows, transparency is therefore only asked for
 /// when the X server reports a compositor.
-fn transparency_available() -> bool {
+pub(crate) fn transparency_available() -> bool {
     #[cfg(windows)]
     {
         true
@@ -30,6 +30,12 @@ fn transparency_available() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
+        // Wayland always composites; Xwayland does not expose the EWMH atom the
+        // check below looks for, so trusting the atom alone would call a KDE
+        // Wayland session opaque and paint the overlay's window white.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return true;
+        }
         // `_NET_WM_CM_S0` is the EWMH way to name the compositing manager for
         // screen 0; it is absent when nothing is blending.
         std::process::Command::new("xprop")

@@ -2,10 +2,13 @@
 //!
 //! A topmost, transparent overlay that measures the desktop in physical pixels:
 //! distances, boxes, angles and guides. On Windows it owns the screen from a
-//! dedicated thread and paints with GDI; on macOS it is a transparent webview
-//! that paints the same overlay on a canvas. Neither version gives the screen
-//! back until it is closed, and both can be locked click-through so other
-//! applications remain usable underneath.
+//! dedicated thread and paints with GDI (see `platform`). On macOS and Linux it is
+//! a transparent full-screen webview that paints the same overlay on a canvas —
+//! `src/components/RulerOverlay.tsx` on macOS, `src/components/Ruler.tsx` on
+//! Linux — with the `macos` and `linux` halves of this module supplying the
+//! snapshot, the window list, locking and Esc. None of them gives the screen back
+//! until it is closed, and all can be locked click-through so other applications
+//! remain usable underneath.
 //!
 //! The geometry and formatting helpers at the top are free of FFI so they can be
 //! tested like the capture module's selection rules. The macOS frontend draws
@@ -522,10 +525,7 @@ pub fn open(app: tauri::AppHandle, settings: Settings) -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = (app, settings);
-        Err(crate::error::AppError::msg(
-            "the onscreen ruler is only available on Windows",
-        ))
+        linux::open(app, settings)
     }
     // macOS gets the same ruler as a transparent overlay window the frontend
     // paints; the Win32 popup itself has no equivalent there.
@@ -3687,6 +3687,543 @@ mod macos {
         if let Err(e) = app.global_shortcut().unregister("Escape") {
             // Nothing registered is the normal case outside a lock.
             log::debug!("no Esc shortcut to release: {e}");
+        }
+    }
+}
+
+/// A rectangle in physical screen pixels, as the overlay reports it.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ScreenRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+impl ScreenRect {
+    fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        ScreenRect {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ToolbarPos {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// Everything the Linux overlay needs to draw its first frame.
+///
+/// `bounds` and `windows` are physical screen pixels; `snapshot` is a data URL
+/// of the desktop taken just before the overlay appeared, used for pixel-edge
+/// snapping (absent when the grab was not possible, e.g. on Wayland).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RulerContext {
+    pub bounds: ScreenRect,
+    pub windows: Vec<ScreenRect>,
+    pub snapshot: Option<String>,
+    pub units: String,
+    pub copy_format: String,
+    pub snap: bool,
+    pub snap_grid: u32,
+    pub snap_threshold: u32,
+    pub edge_rulers: bool,
+    pub guides: bool,
+    pub toolbar_pos: Option<ToolbarPos>,
+    /// True when the desktop cannot be seen through the window (an X session
+    /// with no compositor), so the page paints the snapshot behind the ruler.
+    pub opaque: bool,
+}
+
+/// The first frame's context for the Linux overlay.
+pub fn context(settings: &Settings) -> RulerContext {
+    #[cfg(target_os = "linux")]
+    {
+        linux::context(settings)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = settings;
+        RulerContext {
+            bounds: ScreenRect::new(0, 0, 0, 0),
+            windows: Vec::new(),
+            snapshot: None,
+            units: "physical".into(),
+            copy_format: "px".into(),
+            snap: true,
+            snap_grid: 0,
+            snap_threshold: 8,
+            edge_rulers: true,
+            guides: true,
+            toolbar_pos: None,
+            opaque: false,
+        }
+    }
+}
+
+/// Re-takes the desktop snapshot without the overlay in it (F5).
+pub fn refresh(app: &tauri::AppHandle, settings: &Settings) -> RulerContext {
+    #[cfg(target_os = "linux")]
+    {
+        linux::refresh(app, settings)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        context(settings)
+    }
+}
+
+/// Makes the Linux overlay click-through (locked) or interactive again.
+pub fn set_locked(app: &tauri::AppHandle, locked: bool) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::set_locked(app, locked)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, locked);
+        Ok(())
+    }
+}
+
+/// Closes the Linux overlay and releases the shortcut it registered.
+pub fn close(app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    {
+        linux::close(app)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+    }
+}
+
+/// The Linux ruler is a transparent, full-screen webview.
+///
+/// GDI has no equivalent here, so the window is a normal Tauri webview that the
+/// frontend paints — the same approach the recording overlays take. The platform
+/// half only owns what a webview cannot: the screen snapshot and the list of
+/// visible windows for snapping, click-through when locked, and the Esc key,
+/// which the webview never sees and is observed through X11's RECORD extension.
+#[cfg(target_os = "linux")]
+mod linux {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use base64::Engine as _;
+    use tauri::{AppHandle, Emitter, Manager};
+
+    use super::{RulerContext, ScreenRect};
+    use crate::error::{AppError, Result};
+    use crate::settings::Settings;
+
+    const LABEL: &str = "ruler";
+    /// The small "unlock" button that stays clickable while the overlay is
+    /// click-through. A locked window is click-through *and* has given focus up,
+    /// so neither a click nor a keystroke reaches it — this chip is the way back.
+    const UNLOCK_LABEL: &str = "ruler-unlock";
+
+    static LOCKED: AtomicBool = AtomicBool::new(false);
+    /// The RECORD context watching for Esc, so it can be closed with the ruler.
+    static ESC_CONTEXT: Mutex<Option<u32>> = Mutex::new(None);
+    /// Taken before the overlay is built, so it holds the desktop *under* it.
+    static GRABBED: Mutex<Option<Grabbed>> = Mutex::new(None);
+
+    #[derive(Clone)]
+    struct Grabbed {
+        bounds: ScreenRect,
+        windows: Vec<ScreenRect>,
+        snapshot: Option<Vec<u8>>,
+    }
+
+    pub fn open(app: AppHandle, _settings: Settings) -> Result<()> {
+        if let Some(window) = app.get_webview_window(LABEL) {
+            if LOCKED.load(Ordering::Relaxed) {
+                return set_locked(&app, false);
+            }
+            let _ = window.close();
+            return Ok(());
+        }
+        // The overlay must not measure the app that opened it.
+        if let Some(window) = crate::window::window(&app) {
+            let _ = window.hide();
+        }
+        if let Some(settings_window) = app.get_webview_window(crate::window::SETTINGS_LABEL) {
+            let _ = settings_window.hide();
+        }
+        std::thread::Builder::new()
+            .name("onscreen-ruler".into())
+            .spawn(move || {
+                // Let the hidden windows finish disappearing before the grab.
+                std::thread::sleep(Duration::from_millis(180));
+                let bounds = crate::capture::desktop_bounds();
+                if bounds.is_empty() {
+                    log::warn!("the onscreen ruler has no screen to measure");
+                    return;
+                }
+                *GRABBED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Grabbed {
+                    bounds: ScreenRect::new(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    windows: visible_windows(),
+                    snapshot: crate::capture::screen_png().ok().flatten(),
+                });
+                if let Err(e) = build(&app) {
+                    log::warn!("could not open the onscreen ruler: {e}");
+                }
+            })
+            .map_err(|e| AppError::msg(format!("could not start the onscreen ruler: {e}")))?;
+        Ok(())
+    }
+
+    fn build(app: &AppHandle) -> tauri::Result<()> {
+        let window = tauri::WebviewWindowBuilder::new(
+            app,
+            LABEL,
+            tauri::WebviewUrl::App("index.html?window=ruler".into()),
+        )
+        .title("Onscreen ruler")
+        .decorations(false)
+        .resizable(false)
+        .transparent(crate::window::transparency_available())
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .visible(false)
+        .focused(true)
+        .build()?;
+        let _ = window.set_fullscreen(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+        // WebKit eats Esc before the page can see it (it is the webview's own
+        // "stop" gesture), and a full-screen window means the DOM never gets the
+        // key. RECORD is the same X11 path the `::` popup uses: it watches the
+        // server's event stream without grabbing the keyboard.
+        watch_escape(app.clone());
+        Ok(())
+    }
+
+    pub fn context(settings: &Settings) -> RulerContext {
+        // Kept (not taken): the page can ask more than once while it boots, and
+        // re-grabbing then would photograph the overlay itself.
+        let grabbed = GRABBED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_else(grab);
+        view(grabbed, settings)
+    }
+
+    pub fn refresh(app: &AppHandle, settings: &Settings) -> RulerContext {
+        let window = app.get_webview_window(LABEL);
+        if let Some(window) = &window {
+            let _ = window.hide();
+            std::thread::sleep(Duration::from_millis(120));
+        }
+        let grabbed = grab();
+        if let Some(window) = &window {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        view(grabbed, settings)
+    }
+
+    fn grab() -> Grabbed {
+        let bounds = crate::capture::desktop_bounds();
+        Grabbed {
+            bounds: ScreenRect::new(bounds.left, bounds.top, bounds.right, bounds.bottom),
+            windows: visible_windows(),
+            snapshot: crate::capture::screen_png().ok().flatten(),
+        }
+    }
+
+    fn view(grabbed: Grabbed, settings: &Settings) -> RulerContext {
+        RulerContext {
+            bounds: grabbed.bounds,
+            windows: grabbed.windows,
+            snapshot: grabbed.snapshot.map(|png| {
+                format!(
+                    "data:image/png;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(png)
+                )
+            }),
+            units: settings.ruler_units.clone(),
+            copy_format: settings.ruler_copy_format.clone(),
+            snap: settings.ruler_snap,
+            snap_grid: settings.ruler_snap_grid,
+            snap_threshold: settings.ruler_snap_threshold,
+            edge_rulers: settings.ruler_edge_rulers,
+            guides: settings.ruler_guides,
+            toolbar_pos: settings.ruler_toolbar_pos.map(|pos| {
+                super::ToolbarPos { x: pos.x, y: pos.y }
+            }),
+            opaque: !crate::window::transparency_available(),
+        }
+    }
+
+    /// The other windows on screen, in root coordinates, for window snapping.
+    ///
+    /// Only X11 clients are visible here: on a Wayland session this is the
+    /// XWayland subset, which is the honest answer the server can give.
+    fn visible_windows() -> Vec<ScreenRect> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{ConnectionExt as _, MapState};
+
+        let Ok((conn, screen_num)) = x11rb::connect(None) else {
+            return Vec::new();
+        };
+        let root = conn.setup().roots[screen_num].root;
+        let Ok(cookie) = conn.query_tree(root) else {
+            return Vec::new();
+        };
+        let Ok(tree) = cookie.reply() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for window in tree.children {
+            let Ok(cookie) = conn.get_window_attributes(window) else {
+                continue;
+            };
+            let Ok(attrs) = cookie.reply() else {
+                continue;
+            };
+            if attrs.map_state != MapState::VIEWABLE || attrs.override_redirect {
+                continue;
+            }
+            let Ok(cookie) = conn.get_geometry(window) else {
+                continue;
+            };
+            let Ok(geometry) = cookie.reply() else {
+                continue;
+            };
+            if geometry.width < 24 || geometry.height < 24 {
+                continue;
+            }
+            let Ok(cookie) = conn.translate_coordinates(window, root, 0, 0) else {
+                continue;
+            };
+            let Ok(position) = cookie.reply() else {
+                continue;
+            };
+            let left = i32::from(position.dst_x);
+            let top = i32::from(position.dst_y);
+            out.push(ScreenRect::new(
+                left,
+                top,
+                left + i32::from(geometry.width),
+                top + i32::from(geometry.height),
+            ));
+            if out.len() >= 256 {
+                break;
+            }
+        }
+        out
+    }
+
+    pub fn set_locked(app: &AppHandle, locked: bool) -> Result<()> {
+        let Some(window) = app.get_webview_window(LABEL) else {
+            return Ok(());
+        };
+        if let Err(e) = window.set_ignore_cursor_events(locked) {
+            log::warn!("could not make the ruler click-through: {e}");
+            return Err(AppError::msg(format!("could not lock the ruler: {e}")));
+        }
+        LOCKED.store(locked, Ordering::Relaxed);
+        let _ = window.set_always_on_top(true);
+        if locked {
+            show_unlock_chip(app);
+        } else {
+            if let Some(chip) = app.get_webview_window(UNLOCK_LABEL) {
+                let _ = chip.close();
+            }
+            let _ = window.set_focus();
+        }
+        let _ = app.emit_to(LABEL, "ruler-lock", locked);
+        Ok(())
+    }
+
+    fn show_unlock_chip(app: &AppHandle) {
+        if app.get_webview_window(UNLOCK_LABEL).is_some() {
+            return;
+        }
+        let handle = app.clone();
+        let _ = std::thread::Builder::new()
+            .name("ruler-unlock".into())
+            .spawn(move || {
+                if let Err(e) = build_unlock_chip(&handle) {
+                    log::warn!("could not show the ruler unlock chip: {e}");
+                }
+            });
+    }
+
+    fn build_unlock_chip(app: &AppHandle) -> tauri::Result<()> {
+        let window = tauri::WebviewWindowBuilder::new(
+            app,
+            UNLOCK_LABEL,
+            tauri::WebviewUrl::App("index.html?window=ruler-unlock".into()),
+        )
+        .title("Ruler locked")
+        .inner_size(250.0, 48.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(crate::window::transparency_available())
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .focused(false)
+        .build()?;
+        if let Ok(Some(monitor)) = window.current_monitor() {
+            let size = monitor.size();
+            let origin = monitor.position();
+            let scale = monitor.scale_factor();
+            let width = window
+                .outer_size()
+                .map(|size| size.width as f64)
+                .unwrap_or(250.0 * scale);
+            let x = origin.x + ((size.width as f64 - width) / 2.0).max(0.0) as i32;
+            let y = origin.y + size.height as i32 - (78.0 * scale) as i32;
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+        let _ = window.show();
+        Ok(())
+    }
+
+    /// Watches the server's key stream for Esc while the overlay is up.
+    ///
+    /// The same RECORD extension the `::` quick popup uses: it observes events
+    /// without grabbing the keyboard, so nothing else is disturbed. The webview
+    /// itself never sees Esc — WebKit consumes it as its own "stop" gesture — so
+    /// this is what makes Esc close (or unlock) the ruler.
+    fn watch_escape(app: AppHandle) {
+        std::thread::Builder::new()
+            .name("ruler-esc".into())
+            .spawn(move || {
+                use x11rb::connection::Connection;
+                use x11rb::protocol::record::{self, ConnectionExt as _};
+                use x11rb::protocol::xproto::{ConnectionExt as _, KEY_PRESS_EVENT, KeyPressEvent};
+                use x11rb::x11_utils::TryParse;
+
+                let Ok((stream, _)) = x11rb::connect(None) else {
+                    return;
+                };
+                let Ok((control, _)) = x11rb::connect(None) else {
+                    return;
+                };
+                let setup = control.setup();
+                let count = setup.max_keycode - setup.min_keycode + 1;
+                let Ok(cookie) = control.get_keyboard_mapping(setup.min_keycode, count) else {
+                    return;
+                };
+                let Ok(map) = cookie.reply() else { return };
+                let per = map.keysyms_per_keycode.max(1) as usize;
+                let escape = map
+                    .keysyms
+                    .chunks(per)
+                    .position(|chunk| chunk.first() == Some(&0xff1b))
+                    .map(|index| setup.min_keycode + index as u8);
+                let Some(escape) = escape else { return };
+
+                let empty = record::Range8 { first: 0, last: 0 };
+                let empty_ext = record::ExtRange {
+                    major: empty,
+                    minor: record::Range16 { first: 0, last: 0 },
+                };
+                let range = record::Range {
+                    core_requests: empty,
+                    core_replies: empty,
+                    ext_requests: empty_ext,
+                    ext_replies: empty_ext,
+                    delivered_events: empty,
+                    device_events: record::Range8 {
+                        first: KEY_PRESS_EVENT,
+                        last: KEY_PRESS_EVENT,
+                    },
+                    errors: empty,
+                    client_started: false,
+                    client_died: false,
+                };
+                let Ok(context) = control.generate_id() else {
+                    return;
+                };
+                let Ok(cookie) = control.record_create_context(
+                    context,
+                    0,
+                    &[record::CS::ALL_CLIENTS.into()],
+                    &[range],
+                ) else {
+                    return;
+                };
+                if cookie.check().is_err() {
+                    return;
+                }
+                *ESC_CONTEXT.lock().unwrap_or_else(|e| e.into_inner()) = Some(context);
+
+                let Ok(replies) = stream.record_enable_context(context) else {
+                    return;
+                };
+                for reply in replies {
+                    let Ok(reply) = reply else { break };
+                    if reply.category != 0 {
+                        continue;
+                    }
+                    let mut remaining = &reply.data[..];
+                    while !remaining.is_empty() {
+                        match remaining[0] {
+                            KEY_PRESS_EVENT => {
+                                let Ok((event, rest)) = KeyPressEvent::try_parse(remaining) else {
+                                    break;
+                                };
+                                if event.detail == escape {
+                                    escape_now(&app);
+                                }
+                                remaining = rest;
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+                log::debug!("the ruler's Esc watcher stopped");
+            })
+            .ok();
+    }
+
+    fn stop_escape_watch() {
+        if let Some(context) = ESC_CONTEXT.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            use x11rb::protocol::record::ConnectionExt as _;
+            use x11rb::wrapper::ConnectionExt as _;
+            if let Ok((conn, _)) = x11rb::connect(None) {
+                let _ = conn.record_disable_context(context);
+                let _ = conn.sync();
+            }
+        }
+    }
+
+    fn escape_now(app: &AppHandle) {
+        if app.get_webview_window(LABEL).is_none() {
+            return;
+        }
+        if LOCKED.load(Ordering::Relaxed) {
+            let _ = set_locked(app, false);
+        } else {
+            close(app);
+        }
+    }
+
+    pub fn close(app: &AppHandle) {
+        LOCKED.store(false, Ordering::Relaxed);
+        stop_escape_watch();
+        *GRABBED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        if let Some(chip) = app.get_webview_window(UNLOCK_LABEL) {
+            let _ = chip.close();
+        }
+        if let Some(window) = app.get_webview_window(LABEL) {
+            let _ = window.close();
         }
     }
 }

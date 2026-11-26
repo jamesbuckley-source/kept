@@ -157,6 +157,44 @@ pub fn open_ruler(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
     crate::ruler::open(app, state.store.settings())
 }
 
+/// What the Linux ruler overlay needs to draw its first frame.
+#[tauri::command]
+pub fn ruler_context(state: State<'_, AppState>) -> crate::ruler::RulerContext {
+    crate::ruler::context(&state.store.settings())
+}
+
+/// Re-takes the desktop snapshot under the overlay (F5 in the ruler).
+#[tauri::command]
+pub fn ruler_refresh(app: AppHandle, state: State<'_, AppState>) -> crate::ruler::RulerContext {
+    crate::ruler::refresh(&app, &state.store.settings())
+}
+
+/// Saves the ruler's own options (toolbar position, units, snap, guides).
+#[tauri::command]
+pub fn ruler_patch(state: State<'_, AppState>, patch: serde_json::Value) -> Result<()> {
+    state.store.update_settings(&patch)?;
+    Ok(())
+}
+
+/// Puts a measured value on the clipboard and into history.
+#[tauri::command]
+pub fn ruler_copy(app: AppHandle, text: String) -> Result<()> {
+    record_text_clip(&app, &text, "Screen ruler")?;
+    Ok(())
+}
+
+/// Makes the overlay click-through (locked) or interactive again.
+#[tauri::command]
+pub fn ruler_lock(app: AppHandle, locked: bool) -> Result<()> {
+    crate::ruler::set_locked(&app, locked)
+}
+
+/// Closes the overlay and releases the shortcuts it holds.
+#[tauri::command]
+pub fn ruler_overlay_close(app: AppHandle) {
+    crate::ruler::close(&app);
+}
+
 /// Puts one piece of text on the clipboard and into history, under a source app
 /// name of its own.
 ///

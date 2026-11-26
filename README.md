@@ -13,7 +13,9 @@ Everything stays on your machine. Clip contents are stored locally in SQLite; th
 app makes are for a copied picture's own source file, a link's preview picture, GIPHY (with your key),
 and its own update check — each described in [Security model](#security-model).
 
-> **Linux support is Beta.** Most functionality should work on Linux (X11). The **onscreen ruler does not yet work on Linux**; other features are available subject to the platform notes below.
+> **Linux support is Beta.** Most functionality should work on Linux (X11). The onscreen ruler works on
+> X11; on Wayland it runs as an overlay without global shortcuts; other features are available subject
+> to the platform notes below.
 
 <p align="center">
   <a href="https://github.com/jamesbuckley-source/kept/releases/latest/download/Kept_x64-setup.exe">
@@ -41,7 +43,7 @@ Linux packages are published on the [releases page](https://github.com/jamesbuck
 - **Debian/Ubuntu** (`.deb`) — install with `sudo apt install ./Kept_*_amd64.deb` (or your distro’s package tool).
 - **Fedora/RHEL/openSUSE** (`.rpm`) — install with `sudo dnf install ./Kept-*.rpm` (or `rpm -i`).
 
-Linux builds target X11-based desktops and may require standard Tauri/WebKitGTK runtime libraries provided by your distribution. See [docker/README.md](docker/README.md) for development environment details, known limitations, and X11 notes (including no-compositor behavior). **Onscreen ruler is not yet available on Linux.**
+Linux builds target X11-based desktops and may require standard Tauri/WebKitGTK runtime libraries provided by your distribution. See [docker/README.md](docker/README.md) for development environment details, known limitations, and X11 notes (including no-compositor behavior). **The onscreen ruler is available on Linux** and is described in [Onscreen ruler](#onscreen-ruler).
 
 All versions, notes and artefacts (Windows and Linux) are on the
 [releases page](https://github.com/jamesbuckley-source/kept/releases/latest). Auto-update behavior is currently focused on Windows signed releases.
@@ -142,8 +144,8 @@ theme and the image editor. It can be re-run from Settings at any time.*
   beside the crosshair previews the pixel and its hex/RGB values before you click.
 - **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)).
 - **Measures the screen** with an onscreen ruler: drag distances and boxes, click angles, drop
-  guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. **The
-  onscreen ruler is not yet available on Linux (Beta).** On Windows, its icon-only toolbar names
+  guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. It is
+  available on Windows and on Linux (X11). Its icon-only toolbar names
   each tool on hover, the padlock locks it click-through so other apps stay usable (Esc unlocks,
   Esc again closes), and its Copy button puts the readout on the clipboard and in history in px,
   DIP or both.
@@ -184,8 +186,8 @@ inside a Windows reserved port range on machines with Hyper-V or WSL enabled, wh
 On Linux you need a desktop session/display (X11) and the system dependencies required by Tauri/WebKitGTK,
 plus tools used by Linux capture/clipboard features as applicable (e.g. `ffmpeg`, `tesseract`, `xdotool`,
 `maim`, `xclip`) depending on the features you exercise. See [docker/README.md](docker/README.md) for a
-known-good container setup, X11/no-compositor notes, and current limitations. **The onscreen ruler is not
-yet available on Linux.**
+known-good container setup, X11/no-compositor notes, and current limitations. **The onscreen ruler
+is available on Linux**, with the Wayland caveats listed there.
 
 The app starts hidden. Press **Alt+V** (or your configured global shortcut) or use the tray icon/menu to
 bring it up. The very first launch shows the window instead, so it does not look like nothing happened. On
@@ -235,14 +237,14 @@ npm run tauri build -- --bundles deb appimage rpm
 Artifacts are written under `src-tauri/target/release/bundle/` (for example `deb/*.deb`,
 `appimage/*.AppImage`, `rpm/*.rpm`) depending on host support. Tagged GitHub releases build and
 upload Linux packages automatically for end-user installation (see [Releases and automatic updates](#releases-and-automatic-updates)).
-Linux support is **Beta** and the **onscreen ruler is not yet available on Linux**. See
+Linux support is **Beta**, including the onscreen ruler (see the Linux notes above). See
 [docker/README.md](docker/README.md) for Linux development and platform limitations.
 
 ## Tray and background behaviour
 
 Kept starts hidden and lives in the tray. Left-click the icon to toggle the window; right-click for
-the full menu — **Open Kept**, *New clip…*, *Color Picker*, *Onscreen ruler* (Windows only, not yet
-available on Linux), a **Capture** submenu, **Pause capture**, *Settings…*, *Data folder* and *Quit*.
+the full menu — **Open Kept**, *New clip…*, *Color Picker*, *Onscreen ruler*, a **Capture** submenu,
+**Pause capture**, *Settings…*, *Data folder* and *Quit*.
 The menu follows the state: a pause reads *Resume capture (12 min left)*, and *Lock vault* appears
 only while the vault is open. On Linux (Beta), tray behavior and available integrations may vary by
 desktop environment.
@@ -280,8 +282,9 @@ the taskbar* are settings.
 The quick paste box has its own keys: `↓` reveals the recent list and walks down it, typing searches,
 `Enter` pastes the highlighted clip and `Esc` closes the box without pasting.
 
-The onscreen ruler has keys of its own. `Esc` closes it; while it is locked click-through, the first
-`Esc` unlocks it and the second closes it. Inside the overlay, `V`/`D`/`B`/`A` choose select,
+The onscreen ruler has keys of its own. `Esc` closes it; a locked, click-through ruler shows an
+**Unlock** button (on X11 the first `Esc` also unlocks it and the second closes it). Inside the
+overlay, `V`/`D`/`B`/`A` choose select,
 distance, box and angle, `G` toggles guides, `S` snapping, `C` copies, `L` locks, the arrow keys nudge
 the active measurement (`Shift` for 10 px), `Tab` cycles measurements, `Delete` removes the active
 one and `F5` refreshes the snapping snapshot.
@@ -866,7 +869,10 @@ chrome only — the captured pixels never contain it. Every kind has an optional
 
 ## Onscreen ruler
 
-> **Linux (Beta):** the onscreen ruler is **not yet available on Linux**. The information below applies to Windows.
+> **Linux (Beta):** on X11 the ruler behaves as described below. On Wayland it also opens, but the
+> compositor does not hand it global keys, so `Esc` closing depends on the session and a locked ruler
+> is released with the **Unlock** chip it shows. Snapping to colour edges needs a screenshot, which
+> needs X11 (`maim`); window snapping sees XWayland windows only.
 
 The ruler opens from the title bar, the sidebar, the tray menu or its opt-in shortcut and covers the
 primary monitor. Select, distance, box and angle tools give pixel readouts; guides are dragged from

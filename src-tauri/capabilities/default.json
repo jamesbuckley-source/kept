@@ -12,9 +12,10 @@
     "record-bar",
     "record-area",
     "countdown",
+    "ruler",
+    "ruler-unlock",
     "stack",
-    "quick",
-    "ruler"
+    "quick"
   ],
   "permissions": [
     "core:default",

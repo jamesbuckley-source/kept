@@ -84,7 +84,7 @@ is **458 passing, 0 failing** on Linux (475 on Windows), and the packaged app op
 on the container desktop — setup wizard, SQLite migrations, global shortcuts and the
 tray all come up. The release workflow now builds Linux packages (AppImage, `.deb`,
 `.rpm`) for end users alongside the Windows installer. Most functionality should work
-on Linux (X11); the **onscreen ruler does not yet work on Linux**.
+on Linux (X11), including the onscreen ruler.
 
 Implemented for X11:
 
@@ -111,7 +111,11 @@ Implemented for X11:
 
 Still limited or not yet available on Linux (Beta):
 
-- **Onscreen ruler** does not yet work on Linux (`ruler.rs` is a Win32 overlay; only its measurement maths is portable).
+- **Onscreen ruler** is a transparent full-screen webview on Linux (`ruler.rs`'s
+  `linux` module) painted by `src/components/Ruler.tsx`; the Windows GDI overlay
+  remains the reference for its behaviour. On a session without a compositor the
+  overlay paints the pre-open screenshot as its own backdrop, and snapping to
+  colour edges needs `maim` (X11). Window snapping sees XWayland windows only.
 - the recorder's region and window placement (`choose_region` / `choose_window`),
   which share the Win32 drag surface
 - Print Screen as a global key: the option registers a `PrintScreen` shortcut, and

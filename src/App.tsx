@@ -18,11 +18,14 @@ import { ContextMenu, type ContextMenuItem } from "./components/ContextMenu";
 import { VaultPrompt } from "./components/VaultPrompt";
 import { VaultGateProvider } from "./lib/vaultGate";
 import { windowKind } from "./lib/windowKind";
+import { isMac } from "./lib/platform";
 import { EmojiBrowser } from "./components/EmojiBrowser";
 import { GifBrowser } from "./components/GifBrowser";
 import { WizardWindow } from "./components/WizardWindow";
 import { PromptDialog } from "./components/PromptDialog";
 import { CaptureCountdown } from "./components/CaptureCountdown";
+import { Ruler } from "./components/Ruler";
+import { RulerUnlock } from "./components/RulerUnlock";
 import { RecordArea } from "./components/RecordArea";
 import { RulerOverlay } from "./components/RulerOverlay";
 import { PasteStackPanel, PasteStackWindow } from "./components/PasteStackPanel";
@@ -4151,7 +4154,10 @@ export default function App() {
     return <CaptureCountdown />;
   }
   if (kind === "ruler") {
-    return <RulerOverlay />;
+    return isMac ? <RulerOverlay /> : <Ruler />;
+  }
+  if (kind === "ruler-unlock") {
+    return <RulerUnlock />;
   }
   if (kind === "wizard") {
     return <WizardWindow />;

@@ -21,6 +21,7 @@ import type {
   RecordStatus,
   RecordToolchain,
   RichText,
+  RulerContext,
   SaveFormat,
   SaveReport,
   Settings,
@@ -101,6 +102,36 @@ export function pickScreenColor(): Promise<void> {
 /** Hides the window and opens the onscreen ruler. */
 export function openRuler(): Promise<void> {
   return invoke("open_ruler");
+}
+
+/** What the ruler overlay needs to draw its first frame. */
+export function rulerContext(): Promise<RulerContext> {
+  return invoke<RulerContext>("ruler_context");
+}
+
+/** Re-takes the desktop snapshot under the overlay (F5). */
+export function rulerRefresh(): Promise<RulerContext> {
+  return invoke<RulerContext>("ruler_refresh");
+}
+
+/** Saves the ruler's own options, e.g. its toolbar position. */
+export function rulerPatch(patch: Record<string, unknown>): Promise<void> {
+  return invoke("ruler_patch", { patch });
+}
+
+/** Puts a measured value on the clipboard and into history. */
+export function rulerCopy(text: string): Promise<void> {
+  return invoke("ruler_copy", { text });
+}
+
+/** Makes the overlay click-through (locked) or interactive again. */
+export function rulerLock(locked: boolean): Promise<void> {
+  return invoke("ruler_lock", { locked });
+}
+
+/** Closes the overlay and releases the shortcuts it holds. */
+export function rulerOverlayClose(): Promise<void> {
+  return invoke("ruler_overlay_close");
 }
 
 /** Hides the window and captures the rectangle the user drags on screen. */

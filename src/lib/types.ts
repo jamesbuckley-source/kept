@@ -673,3 +673,31 @@ export interface SplitOutcome {
   /** How many of them the stack had room for. */
   queued: number;
 }
+
+/** A rectangle in physical screen pixels. */
+export interface RulerRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Everything the Linux ruler overlay needs to draw its first frame. */
+export interface RulerContext {
+  bounds: RulerRect;
+  /** Visible windows, in screen pixels, for window snapping. */
+  windows: RulerRect[];
+  /** The desktop under the overlay, as a PNG data URL (null when ungrabbable). */
+  snapshot: string | null;
+  units: Settings["rulerUnits"];
+  copyFormat: Settings["rulerCopyFormat"];
+  snap: boolean;
+  snapGrid: number;
+  snapThreshold: number;
+  edgeRulers: boolean;
+  guides: boolean;
+  /** Where the toolbar was last left, in screen pixels. */
+  toolbarPos: { x: number; y: number } | null;
+  /** True when the page has to paint the snapshot behind the ruler. */
+  opaque: boolean;
+}
