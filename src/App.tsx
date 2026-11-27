@@ -28,7 +28,7 @@ import { Ruler } from "./components/Ruler";
 import { RulerUnlock } from "./components/RulerUnlock";
 import { RecordArea } from "./components/RecordArea";
 import { RulerOverlay } from "./components/RulerOverlay";
-import { PasteStackPanel, PasteStackWindow } from "./components/PasteStackPanel";
+import { PasteStackWindow } from "./components/PasteStackWindow";
 import { RecordBar } from "./components/RecordBar";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { WhatsNewWindow } from "./components/WhatsNewWindow";
@@ -133,6 +133,9 @@ import {
   closeStackWindow,
   openStackWindow,
   stackClear,
+  stackDropFiles,
+  stackCopyAll,
+  stackPasteAll,
   stackFromCollection,
   stackPasteNext,
   stackPush,
@@ -426,8 +429,9 @@ function MainApp() {
   } | null>(null);
   /** Highlighted while files are dragged over the window. */
   const [dragging, setDragging] = useState(false);
+  /** How the last drop onto the stack window went. */
+  const [stackDropStatus, setStackDropStatus] = useState<string | null>(null);
   /** The button the paste stack panel hangs off, or null while it is closed. */
-  const [stackAnchor, setStackAnchor] = useState<{ x: number; y: number } | null>(null);
 
   const searchRef = useRef<HTMLInputElement | null>(null);
   const { settings, error: settingsError, patch, refresh: refreshSettings, clearError } = useSettings();
@@ -600,7 +604,7 @@ function MainApp() {
     };
   }, []);
 
-  /** Files dropped on the window become history entries. */
+  /** Files dropped on the window become history entries — or queue entries. */
   useEffect(() => {    let unlisten: (() => void) | undefined;
     let disposed = false;
     getCurrentWebview()
@@ -613,6 +617,19 @@ function MainApp() {
         } else if (payload.type === "drop") {
           setDragging(false);
           if (payload.paths.length === 0) return;
+          // The stack window is a drop target of its own: dropping there queues
+          // what was dropped instead of only filing it in the history.
+          if (windowLabel === "stack") {
+            stackDropFiles(payload.paths)
+              .then((outcome) => {
+                bump();
+                setStackDropStatus(
+                  `Queued ${outcome.queued} item${outcome.queued === 1 ? "" : "s"} — ${outcome.total} in the stack.`,
+                );
+              })
+              .catch((e) => setStackDropStatus(errorMessage(e)));
+            return;
+          }
           importDroppedFiles(payload.paths)
             .then((count) => {
               bump();
@@ -634,7 +651,7 @@ function MainApp() {
       disposed = true;
       unlisten?.();
     };
-  }, [bump]);
+  }, [bump, windowLabel]);
 
   /** Archives can be told to keep their clips closed: no preview text and no
    * note marker, configured separately for rows and cards. */
@@ -1934,20 +1951,20 @@ function MainApp() {
 
   // ---- paste stack --------------------------------------------------------
 
-  const addToStack = useCallback(async (ids: number[]) => {
+  const addToStack = useCallback(async (ids: number[]): Promise<number> => {
     try {
       const added = await stackPush(ids);
       if (added === 0) {
-        setNotice("The paste stack is full — remove something first.");
-        return;
+        setNotice("Stacks is full — remove something first.");
+        return 0;
       }
       setNotice(
-        added === 1
-          ? "Queued 1 clip in the paste stack."
-          : `Queued ${added} clips in the paste stack.`,
+        added === 1 ? "Queued 1 clip in Stacks." : `Queued ${added} clips in Stacks.`,
       );
+      return added;
     } catch (e) {
       setError(errorMessage(e));
+      return 0;
     }
   }, []);
 
@@ -1979,9 +1996,8 @@ function MainApp() {
     }
   }, []);
 
-  /** Sends the queue into its own window, and closes the popover it came from. */
-  const popOutStack = useCallback(() => {
-    setStackAnchor(null);
+  /** The queue lives in its own window; every entry point asks for that window. */
+  const openStack = useCallback(() => {
     openStackWindow().catch((e) => setError(errorMessage(e)));
   }, []);
 
@@ -1992,6 +2008,12 @@ function MainApp() {
       setError(errorMessage(e));
     }
   }, []);
+
+  /** The panel shows the result itself; a rejection carries the reason. */
+  const copyStackAll = useCallback(() => stackCopyAll(), []);
+
+  /** Pastes the whole queue, each item in its own native shape. */
+  const pasteStackAll = useCallback(() => stackPasteAll(), []);
 
   // ---- context menus ------------------------------------------------------
 
@@ -2063,7 +2085,7 @@ function MainApp() {
           label:
             stack.count > 0
               ? `Replace the stack (${stack.count})…`
-              : "Convert to paste stack…",
+              : "Convert to Stacks…",
           icon: <IconStack className="size-3" />,
           onSelect: () => void convertCollectionToStack(collection),
         },
@@ -2372,6 +2394,11 @@ function MainApp() {
     },
     [bump, clearSelection, picked],
   );
+
+  /** Queues the whole selection in Stacks, in the order it was picked. */
+  const bulkStack = useCallback(async () => {
+    if ((await addToStack(picked)) > 0) clearSelection();
+  }, [addToStack, clearSelection, picked]);
 
   /**
    * Creates a collection or archive and files `ids` into it in one step.
@@ -3328,11 +3355,8 @@ function MainApp() {
   // confirmation cannot inherit a "Show folder" pointing somewhere else.
   const infoAction = info && noticeAction?.text === info ? noticeAction : null;
 
-  // The stack panel belongs to the history page; moving to settings or back
-  // should not leave it floating over the new page.
-  useEffect(() => {
-    setStackAnchor(null);
-  }, [route]);
+  // The stack window is its own surface, so nothing here has to close a panel
+  // when the page changes.
 
   // Notices are confirmations, not state the user has to dismiss. One that
   // carries a button stays a little longer, because there is something to click.
@@ -3378,10 +3402,14 @@ function MainApp() {
       <PasteStackWindow
         items={stack.items}
         shortcut={settings?.stackPasteHotkey ?? ""}
+        status={stackDropStatus}
+        dropping={dragging}
         onClose={() => {
           closeStackWindow().catch((e) => setError(errorMessage(e)));
         }}
         onPasteFirst={() => void pasteStackNext()}
+        onPasteAll={pasteStackAll}
+        onCopyAll={copyStackAll}
         onRemove={(id) => {
           stackRemove(id).catch((e) => setError(errorMessage(e)));
         }}
@@ -3423,7 +3451,7 @@ function MainApp() {
           onOpenRuler={startRuler}
           onRecord={openRecordToolbar}
           stackCount={stack.count}
-          onOpenStack={setStackAnchor}
+          onOpenStack={openStack}
           onHide={() => void hideWindow()}
         />
       )}
@@ -3644,6 +3672,14 @@ function MainApp() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => void bulkStack()}
+                    title="Queue the selected clips in Stacks"
+                    className="shrink-0 whitespace-nowrap rounded border border-edge bg-panel-2 px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
+                  >
+                    Stack
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void bulkExport()}
                     className="shrink-0 whitespace-nowrap rounded border border-edge bg-panel-2 px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
                   >
@@ -3730,7 +3766,7 @@ function MainApp() {
               onOpenRuler={startRuler}
               onRecord={openRecordToolbar}
               stackCount={stack.count}
-              onOpenStack={setStackAnchor}
+              onOpenStack={openStack}
               captureMode={settings?.captureMode ?? "region"}
               onRememberCaptureMode={rememberCaptureMode}
               sectionOrder={settings?.sidebarSectionOrder ?? []}
@@ -4111,25 +4147,6 @@ function MainApp() {
         />
       )}
 
-      {stackAnchor && (
-        <PasteStackPanel
-          anchor={stackAnchor}
-          items={stack.items}
-          shortcut={settings?.stackPasteHotkey ?? ""}
-          onClose={() => setStackAnchor(null)}
-          onPopOut={popOutStack}
-          onPasteFirst={() => {
-            setStackAnchor(null);
-            void pasteStackNext();
-          }}
-          onRemove={(id) => {
-            stackRemove(id).catch((e) => setError(errorMessage(e)));
-          }}
-          onClear={() => {
-            stackClear().catch((e) => setError(errorMessage(e)));
-          }}
-        />
-      )}
 
       {menu && (
         <ContextMenu

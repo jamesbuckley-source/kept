@@ -49,8 +49,8 @@ interface TitleBarProps {
   onRecord: () => void;
   /** How many items are queued in the paste stack; 0 hides the header button. */
   stackCount: number;
-  /** Opens the paste stack panel hanging off the button that raised it. */
-  onOpenStack: (anchor: { x: number; y: number }) => void;
+  /** Opens the paste stack in its own window. */
+  onOpenStack: () => void;
   onHide: () => void;
 }
 
@@ -345,12 +345,9 @@ export function TitleBar({
       {stackCount > 0 && (
         <button
           type="button"
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            onOpenStack({ x: rect.left, y: rect.bottom + 4 });
-          }}
-          title={`Paste stack (${stackCount})`}
-          aria-label={`Paste stack, ${stackCount} queued`}
+          onClick={onOpenStack}
+          title={`Stacks (${stackCount})`}
+          aria-label={`Stacks, ${stackCount} queued`}
           className="relative flex size-6 items-center justify-center rounded text-accent transition-colors hover:bg-panel-3 hover:text-accent-hi"
         >
           <IconStack className="size-3.5" />

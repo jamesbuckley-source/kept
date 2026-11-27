@@ -60,6 +60,13 @@ pub struct Watcher {
     /// matching capture is dropped so selecting an item does not immediately
     /// re-record it and reshuffle the list under the user's cursor.
     suppress: Arc<Mutex<Option<String>>>,
+    /// Clipboard sequence of this app's own write, skipped before it is read.
+    ///
+    /// The write is never going to be captured, and reading a large image back
+    /// off the clipboard keeps it open long enough that the paste fired right
+    /// afterwards gets refused — text was small enough to win that race, a
+    /// screenshot was not.
+    skip: Arc<Mutex<Option<u32>>>,
     running: Arc<AtomicBool>,
     /// Private-mode pause: a timed deadline, or the "until restart" flag. While
     /// paused the sequence counter still advances so nothing copied in the
@@ -72,6 +79,7 @@ impl Watcher {
     pub fn new() -> Self {
         Watcher {
             suppress: Arc::new(Mutex::new(None)),
+            skip: Arc::new(Mutex::new(None)),
             running: Arc::new(AtomicBool::new(false)),
             paused_until: Arc::new(Mutex::new(None)),
             paused_forever: Arc::new(AtomicBool::new(false)),
@@ -80,6 +88,14 @@ impl Watcher {
 
     pub fn suppress_hash(&self, hash: String) {
         *self.suppress.lock() = Some(hash);
+    }
+
+    /// Marks the clipboard change at `sequence` as this app's own write.
+    ///
+    /// The watcher then advances past it without reading anything, so the
+    /// content it just published stays untouched for the paste that follows.
+    pub fn skip_sequence(&self, sequence: u32) {
+        *self.skip.lock() = Some(sequence);
     }
 
     pub fn stop(&self) {
@@ -130,6 +146,7 @@ impl Watcher {
             return;
         }
         let suppress = Arc::clone(&self.suppress);
+        let skip = Arc::clone(&self.skip);
         let running = Arc::clone(&self.running);
         let paused_until = Arc::clone(&self.paused_until);
         let paused_forever = Arc::clone(&self.paused_forever);
@@ -150,6 +167,18 @@ impl Watcher {
                         continue;
                     }
                     last = current;
+
+                    // One of our own writes: it is already in the history, and
+                    // reading it back would hold the clipboard open exactly when
+                    // the paste it was published for needs it.
+                    let own_write = take_own_write(&skip, current);
+                    if own_write {
+                        // Nothing was read, so the hash latch has no capture to
+                        // consume it. Dropping it keeps a later, genuine copy of
+                        // the same content from being treated as our own.
+                        *suppress.lock() = None;
+                        continue;
+                    }
 
                     // A timed pause that has just run out is noticed here, so the
                     // indicator in the UI clears itself even if nothing is copied.
@@ -191,6 +220,20 @@ impl Watcher {
             self.running.store(false, Ordering::SeqCst);
             log::error!("could not start the clipboard watcher thread: {e}");
         }
+    }
+}
+
+/// Answers whether `current` is this app's own write, consuming the mark.
+///
+/// Only the exact sequence is skipped, so a copy made a moment later by another
+/// application still reaches the history.
+fn take_own_write(slot: &Mutex<Option<u32>>, current: u32) -> bool {
+    let mut slot = slot.lock();
+    if *slot == Some(current) {
+        *slot = None;
+        true
+    } else {
+        false
     }
 }
 
@@ -1217,9 +1260,9 @@ unsafe fn set_bytes(format: u32, payload: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Publishes `payload` under a named registered format, e.g. "HTML Format".
+/// The id of a registered clipboard format, creating it on first use.
 #[cfg(windows)]
-fn set_registered(name: &str, payload: &[u8]) -> Result<()> {
+fn registered_format(name: &str) -> Result<u32> {
     let units = widened(name);
     let format = unsafe { RegisterClipboardFormatW(windows::core::PCWSTR(units.as_ptr())) };
     if format == 0 {
@@ -1227,6 +1270,13 @@ fn set_registered(name: &str, payload: &[u8]) -> Result<()> {
             "the {name} clipboard format is unavailable"
         )));
     }
+    Ok(format)
+}
+
+/// Publishes `payload` under a named registered format, e.g. "HTML Format".
+#[cfg(windows)]
+fn set_registered(name: &str, payload: &[u8]) -> Result<()> {
+    let format = registered_format(name)?;
     let outcome = with_clipboard(|| unsafe { set_bytes(format, payload) });
     match outcome {
         Some(result) => result,
@@ -1371,10 +1421,132 @@ fn build_dib(width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>> {
 /// Puts a picture on the clipboard as a `CF_DIB`.
 #[cfg(windows)]
 fn set_image(width: u32, height: u32, rgba: &[u8]) -> Result<()> {
-    let payload = build_dib(width, height, rgba)?;
+    write_picture(width, height, rgba, None, None)
+}
+
+/// Encodes RGBA pixels as PNG, the format web editors ask for by name.
+#[cfg(windows)]
+fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
+    let mut buffer = Vec::new();
+    PngEncoder::new(&mut buffer)
+        .write_image(rgba, width, height, ExtendedColorType::Rgba8)
+        .ok()
+        .map(|()| buffer)
+}
+
+/// Publishes `content` as a picture in every flavour, answering its content hash.
+///
+/// [`write_flavoured`] covers the same ground for a caller that has no PNG to
+/// hand; this is the entry point for one that does — the history's own copy path,
+/// which already has the file on disk.
+#[cfg(windows)]
+pub fn write_picture_content(
+    content: &ClipContent,
+    png: Option<&[u8]>,
+    file_name: Option<&str>,
+) -> Result<String> {
+    let ClipContent::Image {
+        width,
+        height,
+        rgba,
+    } = content
+    else {
+        return Err(AppError::Clipboard("that is not a picture".into()));
+    };
+    write_picture(*width, *height, rgba, png, file_name)?;
+    Ok(hashing::of_content(content))
+}
+
+/// Stages a copied picture as a real file, so a paste into a folder has something
+/// to create.
+///
+/// The path stays on the clipboard rather than the bytes, so the file has to
+/// outlive the copy: it is kept until the next picture replaces it, which is
+/// exactly as long as that clipboard content can still be pasted.
+#[cfg(windows)]
+fn stage_picture(png: &[u8], name: &str) -> Option<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join("kept-paste");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(file_name_of(name));
+    std::fs::write(&path, png).ok()?;
+    Some(path)
+}
+
+/// The last path component of `name`, with anything a file name cannot hold
+/// replaced, so a suggested name can never escape the staging folder.
+fn file_name_of(name: &str) -> String {
+    let leaf = name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(name)
+        .trim_matches('.');
+    let cleaned: String = leaf
+        .chars()
+        .map(|ch| match ch {
+            ':' | '*' | '?' | '"' | '<' | '>' | '|' | '/' | '\\' | '\0' => '-',
+            ch if ch.is_control() => '-',
+            ch => ch,
+        })
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        "Kept image.png".to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// Publishes a picture in every shape a paste might ask for.
+///
+/// One clipboard, four audiences: `CF_DIB` is what Office, Paint and every
+/// Win32 editor read; the registered `PNG` format is what Chromium-based editors
+/// (Google Docs among them) look for by name; the `HTML Format` flavour carries the
+/// same picture as a data URI, which is how a canvas editor that inspects
+/// `text/html` decides there is an image to place; and `CF_HDROP` points at the
+/// picture as a file, which is what pasting into a folder needs — an image with no
+/// file flavour leaves Explorer with nothing to create.
+///
+/// `png` is the picture as it is already stored, when the caller has it: encoding
+/// a 4K screenshot again just to copy it would cost a second for nothing.
+#[cfg(windows)]
+pub fn write_picture(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    png: Option<&[u8]>,
+    file_name: Option<&str>,
+) -> Result<()> {
+    let dib = build_dib(width, height, rgba)?;
+    let encoded = match png.filter(|bytes| !bytes.is_empty()) {
+        Some(stored) => Some(stored.to_vec()),
+        None => encode_png(width, height, rgba),
+    };
+    let html = encoded.as_deref().map(|png| {
+        use base64::Engine;
+        let base64 = base64::engine::general_purpose::STANDARD.encode(png);
+        format!("<p><img src=\"data:image/png;base64,{base64}\" alt=\"Image\"></p>")
+    });
+    let staged = encoded
+        .as_deref()
+        .and_then(|png| stage_picture(png, file_name.unwrap_or("Kept image.png")));
+
     let outcome = with_clipboard(|| -> Result<()> {
         unsafe { EmptyClipboard()? };
-        unsafe { set_bytes(CF_DIB, &payload) }
+        unsafe { set_bytes(CF_DIB, &dib)? };
+        if let Some(png) = encoded.as_deref() {
+            let format = registered_format("PNG")?;
+            unsafe { set_bytes(format, png)? };
+        }
+        if let Some(html) = html.as_deref() {
+            let format = registered_format("HTML Format")?;
+            unsafe { set_bytes(format, &build_cf_html(html))? };
+        }
+        if let Some(path) = staged.as_deref() {
+            set_files(&[path.to_string_lossy().into_owned()])?;
+        }
+        Ok(())
     });
     match outcome {
         Some(result) => result,
@@ -1637,6 +1809,20 @@ fn foreground_process_name() -> Option<String> {
 mod tests {
     use super::*;
 
+    /// A name handed to the clipboard becomes a file in the staging folder, so it
+    /// must not be able to point anywhere else.
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_picture_name_stays_inside_the_staging_folder() {
+        assert_eq!(
+            file_name_of("capture-2026-11-27-14-30-12.png"),
+            "capture-2026-11-27-14-30-12.png"
+        );
+        assert_eq!(file_name_of(r"..\..\Windows\system32\x.png"), "x.png");
+        assert_eq!(file_name_of("a:b*c?.png"), "a-b-c-.png");
+        assert_eq!(file_name_of("   "), "Kept image.png");
+    }
+
     /// The X11 clipboard has one owner at a time, so the two tests that publish to
     /// it take turns instead of clobbering each other's selection.
     #[cfg(target_os = "linux")]
@@ -1671,6 +1857,22 @@ mod tests {
     fn a_dib_refuses_a_payload_that_does_not_fit_its_size() {
         assert!(build_dib(2, 2, &[0, 0, 0, 0]).is_err());
         assert!(build_dib(0, 4, &[]).is_err());
+    }
+
+    /// Only the write this app made is skipped: a copy that lands a moment later
+    /// from another application must still be captured.
+    #[test]
+    fn only_our_own_write_is_skipped_once() {
+        let slot = Mutex::new(None);
+        assert!(!take_own_write(&slot, 7), "nothing was marked yet");
+
+        *slot.lock() = Some(7);
+        assert!(!take_own_write(&slot, 6), "a different write is not ours");
+        assert!(take_own_write(&slot, 7), "our own write is skipped");
+        assert!(
+            !take_own_write(&slot, 7),
+            "the mark is consumed, so a later copy is kept"
+        );
     }
 
     #[test]

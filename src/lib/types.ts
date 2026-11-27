@@ -676,6 +676,28 @@ export interface SplitOutcome {
   queued: number;
 }
 
+/** What "Copy all" put into one clipboard record. */
+export interface StackCopyOutcome {
+  /** Stack items that made it into the record. */
+  items: number;
+  /** Images carried inside the rich-text flavours. */
+  images: number;
+  /** Images that only contributed their path (too large or missing on disk). */
+  skipped: number;
+}
+
+/** What a drop onto the Stacks window took: the clips queued, and the queue after. */
+export interface StackDropOutcome {
+  queued: number;
+  total: number;
+}
+
+/** The row a typed clip was stored as, and whether it was new. */
+export interface TypedClipOutcome {
+  id: number;
+  created: boolean;
+}
+
 /** A rectangle in physical screen pixels. */
 export interface RulerRect {
   left: number;

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use base64::Engine as _;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -23,7 +24,8 @@ use crate::markdown::MarkdownExport;
 use crate::media;
 use crate::models::{
     ClipContent, ClipDetail, ClipFilter, ClipKind, ClipPage, Collection, NewClip, QuickItem,
-    RichText, SplitOutcome, StackEntry, Stats, Tag,
+    RichText, SplitOutcome, StackCopyOutcome, StackDropOutcome, StackEntry, Stats, Tag,
+    TypedClipOutcome,
 };
 use crate::ocr;
 use crate::paste;
@@ -680,15 +682,25 @@ pub fn set_clip_note(
 /// The clipboard is deliberately untouched: this seeds the history from the
 /// keyboard rather than copying, so the capture thread has nothing to suppress
 /// and no second row appears.
+///
+/// `created` tells auto-save whether the text became a new row or matched one
+/// that was already in the history. A match must not be edited afterwards, so
+/// the add-clip window stops auto-saving into it.
 #[tauri::command]
-pub fn create_text_clip(app: AppHandle, state: State<'_, AppState>, text: String) -> Result<i64> {
+pub fn create_text_clip(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    text: String,
+) -> Result<TypedClipOutcome> {
     let new = typed_text_clip(text)?;
-    let id = match state.store.insert_clip(new)? {
-        crate::store::InsertOutcome::Inserted(id)
-        | crate::store::InsertOutcome::Duplicate(id) => id,
+    let (id, created) = match state.store.insert_clip(new)? {
+        crate::store::InsertOutcome::Inserted(id) => (id, true),
+        crate::store::InsertOutcome::Duplicate(id) => (id, false),
     };
-    notify_history_changed(&app);
-    Ok(id)
+    if created {
+        notify_history_changed(&app);
+    }
+    Ok(TypedClipOutcome { id, created })
 }
 
 /// Builds the `NewClip` for typed text, applying the capture path's preview and
@@ -932,6 +944,7 @@ fn publish_text_of_clip(
     // it cannot be captured as a fresh clip.
     state.watcher.suppress_hash(hash);
     let sequence = clipboard::sequence_number();
+    state.watcher.skip_sequence(sequence);
     state.store.record_copy(id)?;
     let _ = app.emit(EVENT_HISTORY_CHANGED, ());
     finish_copy(app, state, sequence, auto_paste, hide_window);
@@ -1022,12 +1035,29 @@ fn publish_clip(app: &AppHandle, state: &AppState, id: i64) -> Result<u32> {
             _ => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
         },
         Some(path) => clipboard::write_files(&[path.to_string_lossy().into_owned()])?,
-        None => clipboard::write_flavoured(&content, rich.html.as_deref(), rich.rtf.as_deref())?,
+        // A picture goes out as a bitmap *and* as PNG and HTML: browser-based
+        // editors take the latter, everything native takes the former. The PNG is
+        // the one already on disk, so copying a 4K screenshot does not re-encode it.
+        None => match &content {
+            ClipContent::Image { .. } => {
+                let png = store
+                    .image_file(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|name| store.media_bytes(&name).ok().flatten());
+                // The file flavour pastes a real file into a folder, so it is
+                // named the way "Save as…" would name it.
+                let file_name = store.suggest_save_name(id, SaveFormat::Image).ok();
+                clipboard::write_picture_content(&content, png.as_deref(), file_name.as_deref())?
+            }
+            _ => clipboard::write_flavoured(&content, rich.html.as_deref(), rich.rtf.as_deref())?,
+        },
     };
     let sequence = clipboard::sequence_number();
     // Arm the latch *before* recording the copy: the watcher polls on a timer and
     // could otherwise observe our own write and reshuffle the list.
     state.watcher.suppress_hash(hash);
+    state.watcher.skip_sequence(sequence);
     store.record_copy(id)?;
     let _ = app.emit(EVENT_HISTORY_CHANGED, ());
     Ok(sequence)
@@ -1339,6 +1369,465 @@ pub fn stack_from_collection(
     Ok(queued)
 }
 
+/// Images bigger than this only contribute their path: screenshots are often a
+/// few megabytes each, and a full stack must not turn "copy all" into a stall.
+const STACK_IMAGE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Ceiling for the images embedded in one record, for the same reason. The bytes
+/// are carried twice (base64 in HTML, hex in RTF), so this stays well below what
+/// a clipboard session can hold.
+const STACK_RICH_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// The one clipboard record "Copy all" publishes.
+struct StackDocument {
+    plain: String,
+    html: String,
+    rtf: String,
+    outcome: StackCopyOutcome,
+}
+
+/// Copies every queued item into one clipboard record, keeping the queue.
+///
+/// Text arrives as plain text, HTML and RTF; images are embedded in the two rich
+/// flavours so a target that understands either keeps them. X11 has no rich
+/// clipboard in this app, so Linux pastes the text and the images' paths.
+#[tauri::command]
+pub fn stack_copy_all(app: AppHandle, state: State<'_, AppState>) -> Result<StackCopyOutcome> {
+    let result = stack_copy_all_inner(&app, &state);
+    copy_outcome(&state, &result);
+    result
+}
+
+fn stack_copy_all_inner(app: &AppHandle, state: &AppState) -> Result<StackCopyOutcome> {
+    let document = build_stack_document(&state.store)?;
+    let rtf = (!document.rtf.is_empty()).then_some(document.rtf.as_str());
+    let hash = clipboard::write_flavoured(
+        &ClipContent::Text(document.plain.clone()),
+        Some(&document.html),
+        rtf,
+    )?;
+    // One line per press: if a paste ever arrives as text somewhere, this says
+    // whether the rich flavours were published at all, and how big they were.
+    log::info!(
+        "copy all: {} item(s), {} image(s), {} skipped; published {} bytes of HTML and {} bytes of RTF{}",
+        document.outcome.items,
+        document.outcome.images,
+        document.outcome.skipped,
+        document.html.len(),
+        document.rtf.len(),
+        if rtf.is_none() {
+            " (RTF dropped: it did not validate)"
+        } else {
+            ""
+        }
+    );
+    // The record below is the history entry this write is meant to make.
+    state.watcher.suppress_hash(hash);
+
+    let mut new = build_new_clip(ClipContent::Text(document.plain), Some("Stacks".into()));
+    new.html = Some(document.html);
+    new.rtf = (!document.rtf.is_empty()).then_some(document.rtf);
+    match state.store.insert_clip(new) {
+        Ok(_) => notify_history_changed(app),
+        Err(e) => log::warn!("could not record the copied stack: {e}"),
+    }
+    Ok(document.outcome)
+}
+
+/// How long the target is given to process one paste before the next one is
+/// published. Any shorter and a slow editor receives the second item's clipboard
+/// while still handling the first.
+const STACK_PASTE_GAP_MS: u64 = 400;
+
+/// Pastes every queued item, in order, and leaves the queue intact.
+///
+/// Each item goes on the clipboard in its own native shape — a picture as a
+/// picture, text as text — so nothing depends on a target negotiating flavours
+/// inside one combined payload. That is what makes it the dependable sibling of
+/// "Copy all": Word loads one picture per paste instead of parsing images out of
+/// someone else's document format.
+#[tauri::command]
+pub fn stack_paste_all(app: AppHandle, state: State<'_, AppState>) -> Result<StackCopyOutcome> {
+    let result = stack_paste_all_inner(&app, &state);
+    copy_outcome(&state, &result);
+    result
+}
+
+fn stack_paste_all_inner(app: &AppHandle, state: &AppState) -> Result<StackCopyOutcome> {
+    paste::capture_foreground_excluding(&own_windows(app));
+    let Some(target) = paste::target() else {
+        return Err(AppError::msg(
+            "there is no window to paste into yet — click the window you want first",
+        ));
+    };
+    let entries = state.store.stack()?;
+    if entries.is_empty() {
+        return Err(AppError::msg("there is nothing queued to paste"));
+    }
+    let settings = state.store.settings();
+    let delay = u64::from(settings.paste_delay_ms);
+    window::hide(app);
+
+    let mut outcome = StackCopyOutcome::default();
+    for entry in &entries {
+        let is_image = entry
+            .clip
+            .as_ref()
+            .is_some_and(|clip| clip.kind == ClipKind::Image);
+        let published = match (entry.clip.as_ref(), entry.text.as_deref()) {
+            (Some(clip), _) => match publish_clip(app, state, clip.id) {
+                Ok(_) => true,
+                Err(e) => {
+                    log::warn!("a stack item could not be published: {e}");
+                    false
+                }
+            },
+            (None, Some(text)) => paste_literal_line_only(state, text),
+            (None, None) => false,
+        };
+        if !published {
+            outcome.skipped += 1;
+            continue;
+        }
+        // The first paste waits the user's configured delay, since the window it
+        // goes into may still be behind ours; the rest follow the target's own
+        // pace.
+        let pause = if outcome.items == 0 {
+            delay
+        } else {
+            STACK_PASTE_GAP_MS
+        };
+        match paste::restore_and_paste(target, pause) {
+            Ok(()) => {
+                outcome.items += 1;
+                if is_image {
+                    outcome.images += 1;
+                }
+            }
+            Err(e) => {
+                // An item that never reached the target is not counted as pasted:
+                // the panel's report has to describe what happened.
+                log::warn!("paste all stopped after {} item(s): {e}", outcome.items);
+                report_paste_failure(app, &e);
+                break;
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+/// Puts one queue line on the clipboard without pasting it, for "Paste all".
+fn paste_literal_line_only(state: &AppState, text: &str) -> bool {
+    match clipboard::write(&ClipContent::Text(text.to_string())) {
+        Ok(hash) => {
+            state.watcher.suppress_hash(hash);
+            state.watcher.skip_sequence(clipboard::sequence_number());
+            true
+        }
+        Err(e) => {
+            log::warn!("a queue line could not be published: {e}");
+            false
+        }
+    }
+}
+
+fn build_stack_document(store: &Store) -> Result<StackDocument> {
+    let entries = store.stack()?;
+    if entries.is_empty() {
+        return Err(AppError::msg("there is nothing queued to copy"));
+    }
+
+    let mut plain: Vec<String> = Vec::new();
+    let mut html = String::from("<meta charset=\"utf-8\">");
+    let mut rtf = String::from(
+        "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Segoe UI;}}\\f0\\fs20\\uc1 ",
+    );
+    let mut outcome = StackCopyOutcome::default();
+    let mut embedded = 0usize;
+
+    for entry in &entries {
+        let before = plain.len();
+        if let Some(text) = entry.text.as_deref() {
+            push_stack_text(&mut plain, &mut html, &mut rtf, text);
+        } else if let Some(clip) = entry.clip.as_ref() {
+            match clip.kind {
+                ClipKind::Text => {
+                    let detail = store.detail(clip.id)?;
+                    let Some(text) = detail.text else {
+                        return Err(AppError::msg(
+                            "unlock the vault to copy this stack — one of its clips is sealed",
+                        ));
+                    };
+                    push_stack_text(&mut plain, &mut html, &mut rtf, &text);
+                }
+                ClipKind::Image => {
+                    if clip.media_locked {
+                        return Err(AppError::msg(
+                            "unlock the vault to copy this stack — one of its images is locked",
+                        ));
+                    }
+                    let name = clip.image_file.as_deref();
+                    let path = name.and_then(|name| media::resolve(store.media_dir(), name));
+                    // A sealed image is ciphertext on disk, so the bytes come from
+                    // the store: it decrypts when the vault is open and serves
+                    // nothing when it is not.
+                    let bytes = name
+                        .and_then(|name| store.media_bytes(name).ok().flatten())
+                        .filter(|bytes| {
+                            !bytes.is_empty()
+                                && bytes.len() as u64 <= STACK_IMAGE_MAX_BYTES
+                                && embedded.saturating_add(bytes.len()) <= STACK_RICH_MAX_BYTES
+                        });
+                    match (path, bytes) {
+                        (Some(path), Some(bytes)) => {
+                            embedded += bytes.len();
+                            let encoded =
+                                base64::engine::general_purpose::STANDARD.encode(&bytes);
+                            html.push_str(&format!(
+                                "<p><img src=\"data:image/png;base64,{encoded}\" alt=\"Image\"></p>"
+                            ));
+                            push_rtf_image(&mut rtf, &bytes, clip.width, clip.height);
+                            plain.push(path.to_string_lossy().into_owned());
+                            outcome.images += 1;
+                        }
+                        (path, _) => {
+                            // Too large or unreadable to carry inside the record.
+                            // The path is still what the user queued, so it goes in
+                            // as text rather than disappearing — and the HTML flavour
+                            // points at the file itself, which a reader on this
+                            // machine can still fetch to show the picture.
+                            if let Some(path) = path {
+                                if let Some(url) = file_url(&path) {
+                                    html.push_str(&format!(
+                                        "<p><img src=\"{url}\" alt=\"Image\"></p>"
+                                    ));
+                                }
+                                plain.push(path.to_string_lossy().into_owned());
+                            }
+                            outcome.skipped += 1;
+                        }
+                    }
+                }
+                ClipKind::Files => {
+                    let detail = store.detail(clip.id)?;
+                    for path in &detail.file_paths {
+                        push_stack_text(&mut plain, &mut html, &mut rtf, path);
+                    }
+                }
+            }
+        }
+        if plain.len() > before {
+            outcome.items += 1;
+        }
+    }
+
+    if outcome.items == 0 {
+        return Err(AppError::msg("there is nothing queued to copy"));
+    }
+    rtf.push('}');
+    // A reader that cannot parse the RTF drops the flavour and pastes the next
+    // one down, so an unreadable stream is worse than none: it hides the pictures
+    // behind the plain text. Anything this build cannot vouch for is left out and
+    // the HTML flavour carries the record instead.
+    if !rtf_looks_well_formed(&rtf) {
+        log::warn!("the stack's RTF did not validate, so it is published without it");
+        rtf.clear();
+    }
+    Ok(StackDocument {
+        plain: plain.join("\n"),
+        html,
+        rtf,
+        outcome,
+    })
+}
+
+/// A `file://` URL for a path on this machine, so HTML can point at the picture
+/// instead of carrying a copy of it.
+fn file_url(path: &std::path::Path) -> Option<String> {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let mut url = String::from("file:///");
+    for ch in text.chars() {
+        match ch {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' | '/' | ':' => url.push(ch),
+            // Everything else has to survive being read as a URL — a space in a
+            // custom data folder being the usual case.
+            ch => {
+                let mut buf = [0u8; 4];
+                for byte in ch.encode_utf8(&mut buf).as_bytes() {
+                    url.push_str(&format!("%{byte:02X}"));
+                }
+            }
+        }
+    }
+    Some(url)
+}
+
+/// Whether a reader should be able to make sense of the RTF this app just built.
+///
+/// Three things break a whole document rather than one character: unbalanced
+/// braces, and a control word whose value is outside the signed 16-bit range RTF
+/// specifies — `\u` escapes and `\picwgoal` sizes are both written by hand here.
+/// The writer is the only source of all three, so this is a check on our own
+/// output rather than on anything a reader sent us.
+fn rtf_looks_well_formed(rtf: &str) -> bool {
+    let bytes = rtf.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            b'\\' => {
+                i += 1;
+                let Some(&next) = bytes.get(i) else {
+                    return false;
+                };
+                if !next.is_ascii_alphabetic() {
+                    // \\ \{ \} \' and the like: one escaped byte.
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                let word = &rtf[start..i];
+                let mut negative = false;
+                let mut value: i64 = 0;
+                let mut digits = 0;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'-' if digits == 0 && !negative => negative = true,
+                        b'0'..=b'9' => value = value * 10 + i64::from(bytes[i] - b'0'),
+                        _ => break,
+                    }
+                    digits += 1;
+                    i += 1;
+                }
+                // Every control word takes a signed 16-bit value, `\bin` aside:
+                // its argument is a byte count rather than a parameter this app
+                // ever writes.
+                if digits > 0 && word != "bin" {
+                    let signed = if negative { -value } else { value };
+                    if !(-32768..=32767).contains(&signed) {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    depth == 0
+}
+
+fn push_stack_text(plain: &mut Vec<String>, html: &mut String, rtf: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    plain.push(text.to_string());
+    html.push_str("<p>");
+    html.push_str(&escape_html(text).replace('\n', "<br>"));
+    html.push_str("</p>");
+    rtf.push_str(&escape_rtf(text));
+    rtf.push_str("\\par ");
+}
+
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// RTF is a byte stream with a couple of metacharacters and an ASCII-safe way of
+/// spelling everything else, so unicode never depends on the reader's code page.
+fn escape_rtf(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            '\n' => out.push_str("\\par "),
+            '\r' => {}
+            '\t' => out.push_str("\\tab "),
+            ch if ch.is_ascii_control() => {}
+            ch if ch.is_ascii() => out.push(ch),
+            ch => {
+                let mut units = [0u16; 2];
+                for unit in ch.encode_utf16(&mut units) {
+                    out.push_str(&format!("\\u{}?", rtf_code_unit(*unit)));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The number `\uN?` carries: a *signed* 16-bit value.
+///
+/// Spelling a UTF-16 unit above `0x7fff` as itself hands the reader a number it
+/// cannot use, and Word answers an unusable escape by discarding the whole RTF
+/// stream — which is how "Copy all" reached the document as the images' file
+/// paths, the plain-text flavour, instead of the pictures.
+fn rtf_code_unit(unit: u16) -> i32 {
+    if unit > 0x7fff {
+        i32::from(unit) - 0x1_0000
+    } else {
+        i32::from(unit)
+    }
+}
+
+fn push_rtf_image(rtf: &mut String, bytes: &[u8], width: Option<i64>, height: Option<i64>) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    rtf.push_str("{\\pict\\pngblip");
+    if let (Some(width), Some(height)) = (width, height)
+        && width > 0
+        && height > 0
+    {
+        // Every RTF control word carries a signed 16-bit value, so a goal above
+        // 32767 twips — a screenshot wider than about 2184 px — has to be scaled
+        // down. Written as-is, the reader rejects the picture, and Word rejects the
+        // document with it.
+        let native_w = width as f64 * 15.0;
+        let native_h = height as f64 * 15.0;
+        let scale = (RTF_MAX_CONTROL as f64 / native_w)
+            .min(RTF_MAX_CONTROL as f64 / native_h)
+            .min(1.0);
+        let wgoal = ((native_w * scale).round() as i64).clamp(1, RTF_MAX_CONTROL);
+        let hgoal = ((native_h * scale).round() as i64).clamp(1, RTF_MAX_CONTROL);
+        rtf.push_str(&format!(
+            "\\picw{}\\pich{}\\picwgoal{wgoal}\\pichgoal{hgoal}",
+            width.min(RTF_MAX_CONTROL),
+            height.min(RTF_MAX_CONTROL)
+        ));
+    }
+    rtf.push(' ');
+    for byte in bytes {
+        rtf.push(HEX[(byte >> 4) as usize] as char);
+        rtf.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    rtf.push_str("}\\par ");
+}
+
+/// Largest value an RTF control word can carry.
+const RTF_MAX_CONTROL: i64 = 32767;
+
 /// Pops the paste stack out into its own always-on-top window, so the queue can
 /// sit beside the application it is pasting into.
 #[tauri::command]
@@ -1405,6 +1894,7 @@ fn paste_literal_line(app: &AppHandle, state: &AppState, text: &str) -> Result<(
     let hash = clipboard::write(&ClipContent::Text(text.to_string()))?;
     let sequence = clipboard::sequence_number();
     state.watcher.suppress_hash(hash);
+    state.watcher.skip_sequence(sequence);
     let settings = state.store.settings();
     window::hide(app);
     schedule_auto_clear(app, sequence, &settings, true);
@@ -1586,8 +2076,40 @@ pub fn import_dropped_files(
     state: State<'_, AppState>,
     paths: Vec<String>,
 ) -> Result<usize> {
-    let paths: Vec<String> = paths
+    let imported = import_paths(&state.store, &paths)?;
+    notify_history_changed(&app);
+    Ok(imported.iter().filter(|(_, created)| *created).count())
+}
+
+/// Drops straight onto the queue: the same import, then every resulting clip is
+/// pushed — so a file dragged out of Explorer can be pasted without a detour
+/// through the history list first.
+#[tauri::command]
+pub fn stack_drop_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<StackDropOutcome> {
+    let ids: Vec<i64> = import_paths(&state.store, &paths)?
         .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    state.store.stack_push(&ids)?;
+    notify_history_changed(&app);
+    notify_stack_changed(&app);
+    Ok(StackDropOutcome {
+        queued: ids.len(),
+        total: state.store.stack()?.len(),
+    })
+}
+
+/// Turns dropped paths into a clip, answering its id and whether it is new.
+///
+/// A file that is already in the history maps to the clip that is already there:
+/// dragging the same screenshot twice queues it twice rather than doing nothing.
+fn import_paths(store: &Store, paths: &[String]) -> Result<Vec<(i64, bool)>> {
+    let paths: Vec<String> = paths
+        .iter()
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty() && Path::new(path).exists())
         .collect();
@@ -1595,7 +2117,6 @@ pub fn import_dropped_files(
         return Err(AppError::msg("nothing usable was dropped"));
     }
 
-    let mut imported = 0usize;
     let single_image = (paths.len() == 1)
         .then(|| read_image_file(Path::new(&paths[0])))
         .flatten();
@@ -1608,19 +2129,18 @@ pub fn import_dropped_files(
     } else if let Some(text) = single_text {
         build_new_clip(ClipContent::Text(text), Some("Dropped file".into()))
     } else {
-        build_new_clip(ClipContent::Files(paths.clone()), Some("Dropped files".into()))
+        build_new_clip(ClipContent::Files(paths), Some("Dropped files".into()))
     };
 
-    let settings = state.store.settings();
-    if settings.max_items > 0 && state.store.total() >= settings.max_items as usize {
-        let _ = state.store.prune();
+    let settings = store.settings();
+    if settings.max_items > 0 && store.total() >= settings.max_items as usize {
+        let _ = store.prune();
     }
-    match state.store.insert_clip(new)? {
-        crate::store::InsertOutcome::Inserted(_) => imported += 1,
-        crate::store::InsertOutcome::Duplicate(_) => {}
-    }
-    notify_history_changed(&app);
-    Ok(imported)
+    let outcome = store.insert_clip(new)?;
+    Ok(vec![match outcome {
+        crate::store::InsertOutcome::Inserted(id) => (id, true),
+        crate::store::InsertOutcome::Duplicate(id) => (id, false),
+    }])
 }
 
 /// Builds a `NewClip` with the same preview, search mirror and hash rules capture
@@ -1685,8 +2205,22 @@ fn read_image_file(path: &Path) -> Option<ClipContent> {
 }
 
 /// Reads a small UTF-8 text file, or `None` when it is binary or too large.
+///
+/// A vector picture is deliberately not text here even though it parses as UTF-8:
+/// a dropped `.svg` used to become a text clip, so pasting it produced its markup
+/// instead of the drawing. It lands as a file clip instead, which pastes the file
+/// itself.
 fn read_text_file(path: &Path) -> Option<String> {
     const MAX_TEXT_BYTES: u64 = 1024 * 1024;
+    const NOT_TEXT: [&str; 2] = ["svg", "svgz"];
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if NOT_TEXT.contains(&extension.as_str()) {
+        return None;
+    }
     let metadata = std::fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_TEXT_BYTES {
         return None;
@@ -1892,6 +2426,7 @@ fn finish_media_copy(
 ) -> Result<()> {
     let sequence = clipboard::sequence_number();
     state.watcher.suppress_hash(hash);
+    state.watcher.skip_sequence(sequence);
     store.record_copy(id)?;
     notify_history_changed(app);
     let should_hide = hide_window.unwrap_or(true);
@@ -3805,12 +4340,48 @@ pub fn get_rich_text(state: State<'_, AppState>, id: i64) -> Result<RichText> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExportWatch, SaveWatch, is_email_address, listing, newest_export, save_shortcuts,
-        text_clip_body, typed_text_clip,
+        ExportWatch, SaveWatch, build_stack_document, escape_rtf, file_url, import_paths,
+        is_email_address, listing, newest_export, push_rtf_image, read_text_file,
+        rtf_looks_well_formed, save_shortcuts, text_clip_body, typed_text_clip,
     };
 
     use crate::error::AppError;
-    use crate::store::{InsertOutcome, test_store};
+    use crate::models::{ClipContent, NewClip};
+    use crate::store::{InsertOutcome, Store, test_store};
+
+    fn insert_text(store: &Store, body: &str) -> i64 {
+        match store
+            .insert_clip(typed_text_clip(body.to_string()).expect("non-empty text"))
+            .expect("insert")
+        {
+            InsertOutcome::Inserted(id) | InsertOutcome::Duplicate(id) => id,
+        }
+    }
+
+    fn insert_image(store: &Store, seed: u8) -> i64 {
+        let (width, height) = (4u32, 3u32);
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for i in 0..(width * height) {
+            rgba.extend_from_slice(&[seed, (i % 256) as u8, 200, 255]);
+        }
+        let content = ClipContent::Image {
+            width,
+            height,
+            rgba,
+        };
+        let new = NewClip {
+            content_hash: crate::hashing::of_content(&content),
+            content,
+            source_app: None,
+            search_text: String::new(),
+            preview: "Image".into(),
+            html: None,
+            rtf: None,
+        };
+        match store.insert_clip(new).expect("insert image") {
+            InsertOutcome::Inserted(id) | InsertOutcome::Duplicate(id) => id,
+        }
+    }
 
     #[test]
     fn a_text_capture_keeps_the_words_and_drops_the_edges() {
@@ -4175,5 +4746,128 @@ mod tests {
             Some("Screenshot 2026-10-30 at 09.52.28.png".to_string()),
             "the editor's own file is still found beside them"
         );
+    }
+
+    /// "Copy all" has to stay in queue order, keep every text item, and carry an
+    /// image in *both* rich flavours: Windows and macOS read one or the other
+    /// depending on the application being pasted into.
+    #[test]
+    fn a_stack_copy_keeps_order_and_carries_images_as_rich_text() {
+        let (store, _dir) = test_store();
+        let text = insert_text(&store, "first line\nsecond line");
+        let image = insert_image(&store, 7);
+        store.stack_push(&[text]).unwrap();
+        store
+            .stack_push_lines(&["literal <tag> & {}".to_string()])
+            .unwrap();
+        store.stack_push(&[image]).unwrap();
+
+        let document = build_stack_document(&store).unwrap();
+        let plain: Vec<&str> = document.plain.split('\n').collect();
+        assert_eq!(plain[0], "first line");
+        assert_eq!(plain[1], "second line");
+        assert_eq!(plain[2], "literal <tag> & {}");
+        assert!(plain[3].ends_with(".png"), "got {:?}", plain[3]);
+        assert_eq!(document.outcome.items, 3);
+        assert_eq!(document.outcome.images, 1);
+        assert_eq!(document.outcome.skipped, 0);
+
+        assert!(document.html.contains("data:image/png;base64,"));
+        assert!(document.html.contains("&lt;tag&gt; &amp; {}"));
+        assert!(document.rtf.contains("\\pict\\pngblip"));
+        assert!(document.rtf.contains("\\{"), "braces are escaped");
+        assert!(document.rtf.ends_with('}'), "the document is closed");
+    }
+
+    #[test]
+    fn an_empty_stack_has_nothing_to_copy() {
+        let (store, _dir) = test_store();
+        assert!(build_stack_document(&store).is_err());
+    }
+
+    /// RTF's `\uN?` carries a signed 16-bit value, so a UTF-16 unit above
+    /// `0x7fff` — the surrogate pair of an emoji, many CJK characters — has to be
+    /// written as its negative counterpart. Word discards the whole stream over an
+    /// unusable one, and then pastes the next flavour down: the plain text, which
+    /// is where the images' file paths came from.
+    #[test]
+    fn wide_code_units_are_spelled_as_signed_rtf_escapes() {
+        assert_eq!(escape_rtf("\u{1f4ca}"), "\\u-10179?\\u-9014?");
+        assert_eq!(escape_rtf("\u{8000}"), "\\u-32768?");
+        // Units that already fit stay as themselves.
+        assert_eq!(escape_rtf("\u{201c}x\u{201d}"), "\\u8220?x\\u8221?");
+        assert_eq!(escape_rtf("\u{2026}"), "\\u8230?");
+        // The metacharacters are still escaped.
+        assert_eq!(escape_rtf("a{b}\\c\u{2014}"), "a\\{b\\}\\\\c\\u8212?");
+    }
+
+    /// The check that decides whether the RTF flavour is published at all.
+    #[test]
+    fn the_rtf_check_catches_what_a_reader_would_refuse() {
+        assert!(rtf_looks_well_formed("{\\rtf1\\ansi\\u-10179?text\\par}"));
+        assert!(rtf_looks_well_formed("{\\rtf1 a \\{ b \\} c \\\\ d}"));
+        assert!(
+            !rtf_looks_well_formed("{\\rtf1\\u55357?x}"),
+            "an escape outside the signed range is exactly what Word rejects"
+        );
+        assert!(!rtf_looks_well_formed("{\\rtf1 still open"));
+        assert!(!rtf_looks_well_formed("{\\rtf1} one too many }"));
+    }
+
+    #[test]
+    fn a_file_url_keeps_the_path_readable_in_html() {
+        let path = std::path::Path::new(r"Z:\kept\media\a picture.png");
+        assert_eq!(
+            file_url(path).unwrap(),
+            "file:///Z:/kept/media/a%20picture.png"
+        );
+    }
+
+    /// A 4K screenshot fits in a control word only until it is multiplied by 15;
+    /// past that the goal has to be scaled down, and the aspect ratio with it.
+    #[test]
+    fn a_picture_too_wide_for_an_rtf_control_word_is_scaled_down() {
+        let mut rtf = String::new();
+        push_rtf_image(&mut rtf, &[0u8], Some(8000), Some(6000));
+        assert!(rtf.contains("\\picwgoal32767"), "got {rtf}");
+        assert!(rtf.contains("\\pichgoal24575"), "got {rtf}");
+        assert!(rtf_looks_well_formed(&format!("{{{rtf}}}")));
+    }
+
+    /// Dropping the same file twice queues the clip that is already there rather
+    /// than failing or making a second copy — which is what lets a stack hold a
+    /// clip twice.
+    #[test]
+    fn a_dropped_file_maps_to_the_clip_it_creates_and_then_to_the_same_one() {
+        let (store, _dir) = test_store();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("note.txt");
+        std::fs::write(&file, "dropped body").unwrap();
+        let paths = vec![file.to_string_lossy().into_owned()];
+
+        let first = import_paths(&store, &paths).unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(first[0].1, "the first drop creates a clip");
+
+        let second = import_paths(&store, &paths).unwrap();
+        assert_eq!(second[0].0, first[0].0, "the same file maps to the same clip");
+        assert!(!second[0].1, "a duplicate is not counted as new");
+    }
+
+    /// A vector picture parses as UTF-8, so it used to become a text clip and
+    /// paste its markup. It has to stay a file.
+    #[test]
+    fn a_dropped_svg_is_a_file_rather_than_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let svg = dir.path().join("logo.svg");
+        std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#).unwrap();
+        assert!(
+            read_text_file(&svg).is_none(),
+            "a vector picture must not become a text clip"
+        );
+
+        let txt = dir.path().join("note.txt");
+        std::fs::write(&txt, "plain words").unwrap();
+        assert_eq!(read_text_file(&txt).as_deref(), Some("plain words"));
     }
 }

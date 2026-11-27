@@ -2,6 +2,58 @@
      GitHub release body and as the `notes` field of latest.json, which is what
      Kept's update window shows, so rewrite it before tagging. -->
 
+## Stacks live in their own window
+
+The paste queue - formerly "Paste stack" - is now one thing instead of three. The
+stack badge in the title bar and *Utilities -> Stacks* both open it in a small
+frameless window that stays above other applications, so it can sit beside the
+editor being pasted into. The anchored popover, and the pop-out-and-dock dance
+between the two, are gone.
+
+- **Paste next** reads as an icon and its word, because it is the action the panel
+  expects a press of; **Paste all** and **Copy all** stay compact icon buttons with
+  tooltips.
+- **Paste all** pastes the whole queue in order and keeps it: each item goes on the
+  clipboard in its own native shape - a picture as a picture, text as text, files
+  as files - so nothing depends on the target reconstructing one combined payload.
+- **Drag files or folders** from the desktop onto that window and they are imported
+  and queued at the end, with the status line reporting how many. A file already in
+  the history queues the clip that is there rather than making a second copy.
+
+## Pasting pictures that works everywhere
+
+A copied picture used to be published as a bitmap only, which left every
+application to make of it what it could. It now carries four flavours in one
+clipboard: the bitmap Office and Paint read, the registered `PNG` format that
+Chromium-based editors such as Google Docs look for, an HTML image for canvas
+editors, and **a real file** - so copying a screenshot in Kept and pasting it into
+a folder writes `capture-<timestamp>.png` instead of doing nothing.
+
+**Copy all** was hardened in the same pass:
+
+- Its RTF is written with signed `\u` escapes and validated before it is published.
+  An emoji anywhere in the queue used to make the RTF unreadable, and Word answers
+  an unreadable flavour by dropping it and pasting the plain text - the images'
+  file paths - which is what made "Copy all" look broken in Word.
+- Picture sizes are scaled into the 16-bit range an RTF control word allows, and
+  images too large to embed are referenced by `file://` URL in the HTML.
+- A `.svg` dropped into Kept stays a file instead of becoming a text clip, so
+  pasting it pastes the drawing rather than its markup.
+
+## Pasting goes back where you were
+
+`Alt`+`Shift`+`V` and **Paste next** paste into the window you were working in
+before Kept came forward. Kept now remembers the last window that was in front
+even when the queue is opened from its own interface, so the button no longer
+depends on having summoned Kept with the shortcut first - and a queue item is only
+used up when the paste actually landed.
+
+## Faster clip entry
+
+*New clip* saves as you type: the clip is created, or updated, a moment after you
+stop typing, with **Copy as new** and **Done** beside it, so a note never depends
+on remembering to press save.
+
 ## Capture text
 
 A new capture kind takes the same region drag a screenshot does, but keeps the

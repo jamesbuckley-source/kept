@@ -60,8 +60,8 @@ archives and tags on the right.*
 |---|---|
 | ![Screen recording bar](docs/screenshots/record-bar.png) | ![Quick paste](docs/screenshots/quick-paste.png) |
 | *The recording bar: the four recording modes, the size, and the sound and pointer switches.* | *`::` in another application opens the quick paste box without leaving the sentence.* |
-| ![Paste stack, docked and popped out](docs/screenshots/paste-stack.png) | ![Capture menu](docs/screenshots/capture-menu.png) |
-| *The paste stack in the app, and in its own always-on-top window.* | *The capture button repeats the last kind; the chevron opens all of them.* |
+| ![Stacks, docked and popped out](docs/screenshots/paste-stack.png) | ![Capture menu](docs/screenshots/capture-menu.png) |
+| *Stacks in the app, and in its own always-on-top window.* | *The capture button repeats the last kind; the chevron opens all of them.* |
 
 ![Quick preview of an image clip](docs/screenshots/quick-preview.png)
 
@@ -261,7 +261,7 @@ the taskbar* are settings.
 |---|---|
 | `Alt+V` | Show / hide the overlay (*Settings → Activation → Global hotkey*) |
 | `Ctrl+Alt+P` | Toggle private mode, pausing capture (*Settings → Activation → Private mode shortcut*) |
-| `Alt+Shift+V` | Paste the next paste-stack item and use it up (*Settings → Activation → Paste stack shortcut*) |
+| `Alt+Shift+V` | Paste the next Stacks item and use it up (*Settings → Activation → Stacks shortcut*) |
 | `Print Screen` | Capture the default kind, once *Settings → Capture → Print Screen* is switched on |
 | `::` | Open the quick paste box while typing in another application (*Settings → Quick paste*, off by default) |
 | `↑` `↓` | Move the selection |
@@ -364,16 +364,16 @@ pane; pressing it again clears the flag. *Settings → Capture* adds **Guess fro
 off by default) and **Leave secrets out of history**. Marking a clip secret in the vault encrypts
 the text and its media — see [the vault](#the-vault).
 
-## Paste stack
+## Stacks
 
-The paste stack is a queue of clips pasted **one at a time, in order**, into whatever program has
-focus. It is the missing step between copying one clip and saving a collection: line up the things
-you need next and use them up as you go.
+Stacks is a queue of clips pasted **one at a time, in order**, into whatever program has focus. It is
+the missing step between copying one clip and saving a collection: line up the things you need next
+and use them up as you go.
 
-- **Adding** — hover a clip in either layout and press the stacked-layers button, or right-click it
-  and choose *Add to Stack*. The same clip twice is two pastes, because a stack is a sequence rather
-  than a set.
-- **From a collection** — right-click a collection and choose *Convert to paste stack…*. The queue is
+- **Adding** — hover a clip in either layout and press the stacked-layers button, right-click it and
+  choose *Add to Stack*, or select several and use **Stack** in the bulk bar. The same clip twice is
+  two pastes, because a stack is a sequence rather than a set.
+- **From a collection** — right-click a collection and choose *Convert to Stacks…*. The queue is
   replaced with that collection's clips in the order the list shows them; when something is already
   queued the entry reads *Replace the stack (N)…* so the click is deliberate.
 - **From a text list** — right-click a text clip and choose *Split into stack items…*. Every line
@@ -383,17 +383,37 @@ you need next and use them up as you go.
   asterisks. Plain text with one item per line needs no markers at all. The lines are queued as
   lines, not stored as clips, so splitting a 30-line list does not bury the history.
 - **Pasting** — `Alt+Shift+V` pastes the first item into the window you were in and removes it, ready
-  for the next. Clicking *Paste next* in the panel does the same without the keyboard. A clip that
+  for the next. Clicking *Paste next* in the panel does the same without the keyboard: it goes to the
+  window you were in before Kept came forward. A clip that
   cannot be pasted — the vault is locked, or the media has gone — is refused with a message and stays
   queued rather than being silently dropped.
-- **Seeing it** — a badge in the title bar counts what is queued, and *Utilities → Paste stack* opens
-  the same panel from the sidebar. The panel lists the queue in order, with a thumbnail or the line
-  itself, and each row has a × to drop it; **Clear all** empties the queue.
-- **Popping out** — the panel's top-right button moves the queue into its own small frameless window
-  that stays above other applications, so it can sit beside the editor being pasted into. Drag it by
-  its title, paste from it with *Paste next* or the shortcut, and close it with its ×. Closing only
-  closes that window: the queue is kept, and the panel comes back from the title-bar badge or
-  *Utilities → Paste stack* whenever it is wanted again.
+- **Pasting it all** — *Paste all* pastes the whole queue in order and keeps it: each item goes on the
+  clipboard in its own native shape — a picture as a picture, text as text — and Kept sends the paste
+  for each one. Nothing has to be reconstructed by the target, so a picture arrives as a picture in
+  anything that accepts an image. It is the dependable choice when *Copy all* is pasted somewhere that
+  will not take a styled document.
+- **One clipboard, every flavour** — a copied picture is published as `CF_DIB` *and* as the registered
+  `PNG` format *and* as HTML carrying the same picture as a data URI. Office, Paint and every Win32
+  editor read the bitmap; Chromium-based editors — Google Docs among them — look for `PNG` or the HTML
+  image, and used to get nothing they understood from a bare bitmap.
+- **Copying it all** — *Copy all* puts the whole queue on the clipboard as one record: the text in
+  order, with images embedded in the HTML and RTF flavours so word processors and documents keep
+  them. The RTF is validated before it is published — a stream a reader would refuse is left out
+  rather than published, since a reader that discards it falls back to the plain text. A target that
+  only understands plain text gets each image's file path instead, which is all a text-only paste can
+  carry; images too large to embed are referenced by `file://` URL in the HTML. It does not use
+  anything up, so the queue is still there for *Paste next*.
+- **Seeing it** — a badge in the title bar counts what is queued, and both that badge and
+  *Utilities → Stacks* open the queue's own window. It lists the queue in order, with a thumbnail or
+  the line itself, and each row has a × to drop it; **Clear all** empties the queue.
+- **The window** — the queue lives in a small frameless window that stays above other applications, so
+  it can sit beside the editor being pasted into. Drag it by its title; *Paste next*, *Paste all* and
+  *Copy all* are the three icon buttons at the bottom, each with a tooltip. Closing it only closes the
+  window: the queue is kept, and it comes back from the title-bar badge or *Utilities → Stacks*.
+- **Dropping files** — drag files or folders from the desktop straight onto that window and they are
+  imported like any other drop, then queued at the end, so a saved screenshot joins the stack without
+  a detour through the history list. The window says how many it took, and a duplicate file queues the
+  clip that is already there.
 
 The queue lives in the history database, so it survives a restart. It holds up to 500 items; past
 that the newest are refused with a message rather than the oldest being silently discarded. Deleting
@@ -491,7 +511,7 @@ clip on every save, including ShotCraft's habit of writing a new file each time.
 | Theme | Dark | Dark, Light, or Custom with a color picker per token |
 
 Every window paints the theme's canvas color natively before its page draws, so opening Settings, a
-sticky clip or the paste stack never flashes the platform's default background first. The capture
+sticky clip or Stacks never flashes the platform's default background first. The capture
 overlays keep their transparency and are left alone.
 
 Each sidebar category (All clips, Text, Media, Files, Pinned, and collections/tags together) keeps
@@ -816,10 +836,13 @@ sentence that merely mentions an address is left alone.
 ## Add a clip note
 
 **Add clip** in the toolbar opens a small **New clip** window: type or paste the text, optionally
-with the Markdown buttons, then **Save clip** or `Ctrl+Enter`. The text is stored without touching
-the clipboard, so the watcher never sees it and no second row appears. Whether it is Markdown is
-decided when it is saved — a heading, fence, quote, list, table, link or paired emphasis earns a
-**Markdown** badge and a `type:markdown` filter. Closing the window discards the draft.
+with the Markdown buttons. It **auto-saves as you type** — the first pause becomes a clip and later
+pauses rewrite it — so closing the window never loses the draft. **New** keeps that clip and starts
+another in the same window; **Copy as new** leaves the clip as it is and continues from the same text,
+with the next edit becoming a separate clip; **Done** or `Ctrl+Enter` closes. The text is stored
+without touching the clipboard, so the watcher never sees it and no second row appears. Whether it is
+Markdown is decided when it is saved — a heading, fence, quote, list, table, link or paired emphasis
+earns a **Markdown** badge and a `type:markdown` filter.
 
 ![The New clip window](docs/screenshots/add-clip.png)
 

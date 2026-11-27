@@ -196,6 +196,7 @@ pub fn run() {
             commands::open_sticky_clip_window,
             commands::create_text_clip,
             commands::import_dropped_files,
+            commands::stack_drop_files,
             commands::search_giphy,
             commands::copy_gif,
             commands::import_custom_gif,
@@ -275,6 +276,8 @@ commands::detect_keptcraft,
             commands::stack_remove,
             commands::stack_clear,
             commands::stack_from_collection,
+            commands::stack_copy_all,
+            commands::stack_paste_all,
             commands::stack_paste_next,
             commands::open_stack_window,
             commands::close_stack_window,
@@ -426,6 +429,9 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     sync_autostart(&handle, settings.launch_at_login);
     watcher.start(handle.clone(), Arc::clone(&store));
+    // Pastes started from Kept's own buttons paste into whatever the user was in
+    // before they clicked, which only something watching the front can answer.
+    paste::start_foreground_tracker(handle.clone());
 
     // Off unless the user asked for it, but adopted here so a stored "on" installs
     // the hook at launch rather than at the next settings write.

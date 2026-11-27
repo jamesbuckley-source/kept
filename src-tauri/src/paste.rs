@@ -24,11 +24,120 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 /// `0` means "nothing remembered".
 static TARGET: AtomicIsize = AtomicIsize::new(0);
 
+/// The last window seen in front that was not one of ours.
+///
+/// A paste started from Kept's own interface has no foreground window to read at
+/// the moment it starts, because ours has the focus by then. This is the window
+/// the user was working in just before, which is where such a paste has to land.
+static LAST_EXTERNAL: AtomicIsize = AtomicIsize::new(0);
+
+/// How often the tracker looks at the frontmost window. Fast enough that a click
+/// straight from another application into Kept still catches it, and cheap enough
+/// to run for the life of the process.
+#[cfg(not(target_os = "linux"))]
+const FOREGROUND_POLL_MS: u64 = 250;
+
 pub fn target() -> Option<isize> {
     match TARGET.load(Ordering::Relaxed) {
         0 => None,
         handle => Some(handle),
     }
+}
+
+/// The last remembered window, while it is still one a paste could land in.
+pub fn last_external() -> Option<isize> {
+    match LAST_EXTERNAL.load(Ordering::Relaxed) {
+        0 => None,
+        handle if window_alive(handle) => Some(handle),
+        _ => None,
+    }
+}
+
+/// The window in front, unless it belongs to this application.
+#[cfg(windows)]
+fn external_foreground(own: &[isize]) -> Option<isize> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: GetForegroundWindow takes no arguments and cannot fail.
+    let window = unsafe { GetForegroundWindow() };
+    let handle = window.0 as isize;
+    (!window.is_invalid() && !own.contains(&handle)).then_some(handle)
+}
+
+#[cfg(target_os = "macos")]
+fn external_foreground(own: &[isize]) -> Option<isize> {
+    // Our own process in front is never a target, whatever the caller passed.
+    let own_pid = std::process::id() as isize;
+    frontmost_target(own.iter().copied().chain(std::iter::once(own_pid)))
+}
+
+#[cfg(target_os = "linux")]
+fn external_foreground(own: &[isize]) -> Option<isize> {
+    active_window().filter(|window| !own.contains(window))
+}
+
+/// True while `handle` still names a window a paste could land in.
+#[cfg(windows)]
+fn window_alive(handle: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+    // SAFETY: IsWindow only reads the handle it is given.
+    unsafe { IsWindow(Some(HWND(handle as *mut core::ffi::c_void))).as_bool() }
+}
+
+#[cfg(target_os = "macos")]
+fn window_alive(handle: isize) -> bool {
+    use objc2_app_kit::NSRunningApplication;
+    NSRunningApplication::runningApplicationWithProcessIdentifier(handle as i32).is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn window_alive(handle: isize) -> bool {
+    xdotool(&["getwindowname", &handle.to_string()]).is_ok()
+}
+
+/// Remembers the window in front when it is not one of `own`.
+#[cfg(not(target_os = "linux"))]
+pub fn note_foreground(own: &[isize]) {
+    if let Some(handle) = external_foreground(own) {
+        LAST_EXTERNAL.store(handle, Ordering::Relaxed);
+    }
+}
+
+/// Follows the frontmost window for the life of the process.
+///
+/// Windows and macOS are tracked here; X11 asks the window manager for the focus
+/// owner when the paste happens instead.
+#[cfg(not(target_os = "linux"))]
+pub fn start_foreground_tracker(app: tauri::AppHandle) {
+    let spawned = std::thread::Builder::new()
+        .name("foreground-tracker".into())
+        .spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(FOREGROUND_POLL_MS));
+            let own = own_window_handles(&app);
+            note_foreground(&own);
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not start the foreground tracker: {e}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn start_foreground_tracker(_app: tauri::AppHandle) {}
+
+/// Handles of our own windows, so the tracker never records one of them.
+#[cfg(windows)]
+fn own_window_handles<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<isize> {
+    use tauri::Manager;
+    app.webview_windows()
+        .values()
+        .filter_map(|window| window.hwnd().ok())
+        .map(|handle| handle.0 as isize)
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn own_window_handles<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) -> Vec<isize> {
+    Vec::new()
 }
 
 /// X11 has no window handles to hold onto, so the port drives `xdotool` for the
@@ -66,16 +175,11 @@ fn active_window() -> Option<isize> {
 /// handle is the application the user was working in.
 #[cfg(windows)]
 pub fn capture_foreground(own_window: Option<isize>) {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    // SAFETY: GetForegroundWindow takes no arguments and cannot fail.
-    let window = unsafe { GetForegroundWindow() };
-    if window.is_invalid() {
-        return;
+    let own: Vec<isize> = own_window.into_iter().collect();
+    if let Some(handle) = external_foreground(&own) {
+        LAST_EXTERNAL.store(handle, Ordering::Relaxed);
+        TARGET.store(handle, Ordering::Relaxed);
     }
-    if Some(window.0 as isize) == own_window {
-        return;
-    }
-    TARGET.store(window.0 as isize, Ordering::Relaxed);
 }
 
 /// Records the application in front, which is what a paste reactivates.
@@ -84,8 +188,10 @@ pub fn capture_foreground(own_window: Option<isize>) {
 /// brings back the window the user was working in, and `CGEventPost` types into
 /// whatever is frontmost when the keystroke arrives.
 #[cfg(target_os = "macos")]
-pub fn capture_foreground(_own_window: Option<isize>) {
-    if let Some(target) = frontmost_target(Some(std::process::id() as isize)) {
+pub fn capture_foreground(own_window: Option<isize>) {
+    let own: Vec<isize> = own_window.into_iter().collect();
+    if let Some(target) = external_foreground(&own) {
+        LAST_EXTERNAL.store(target, Ordering::Relaxed);
         TARGET.store(target, Ordering::Relaxed);
     }
 }
@@ -101,8 +207,10 @@ fn frontmost_target(own: impl IntoIterator<Item = isize>) -> Option<isize> {
 
 /// The X11 focus owner stands in for Windows' foreground window.
 #[cfg(target_os = "linux")]
-pub fn capture_foreground(_own_window: Option<isize>) {
-    if let Some(window) = active_window() {
+pub fn capture_foreground(own_window: Option<isize>) {
+    let own: Vec<isize> = own_window.into_iter().collect();
+    if let Some(window) = external_foreground(&own) {
+        LAST_EXTERNAL.store(window, Ordering::Relaxed);
         TARGET.store(window, Ordering::Relaxed);
     }
 }
@@ -110,34 +218,25 @@ pub fn capture_foreground(_own_window: Option<isize>) {
 /// Records the window in front, ignoring every one of our own windows.
 ///
 /// The stack's shortcut is pressed while another application has the focus, so
-/// there is no "our window" to exclude in the usual sense — but the settings or
-/// preview window can be the one in front, and pasting into our own interface
-/// would be worse than doing nothing. An own window in front leaves the remembered
-/// target alone.
-#[cfg(windows)]
+/// there is usually no "our window" to exclude — but the settings or preview
+/// window can be the one in front, and pasting into our own interface would be
+/// worse than doing nothing.
+///
+/// The same function serves the "Paste next" button, which runs with our own
+/// window in front and no foreground window worth reading. There the window to
+/// paste into is the one the user was in before, so the remembered one is used
+/// instead of leaving a stale target from an earlier summon in place.
 pub fn capture_foreground_excluding(own: &[isize]) {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    // SAFETY: GetForegroundWindow takes no arguments and cannot fail.
-    let window = unsafe { GetForegroundWindow() };
-    if window.is_invalid() || own.contains(&(window.0 as isize)) {
-        return;
-    }
-    TARGET.store(window.0 as isize, Ordering::Relaxed);
-}
-
-#[cfg(target_os = "macos")]
-pub fn capture_foreground_excluding(own: &[isize]) {
-    let mut excluded = own.to_vec();
-    excluded.push(std::process::id() as isize);
-    if let Some(target) = frontmost_target(excluded) {
-        TARGET.store(target, Ordering::Relaxed);
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub fn capture_foreground_excluding(_own: &[isize]) {
-    if let Some(window) = active_window() {
-        TARGET.store(window, Ordering::Relaxed);
+    match external_foreground(own) {
+        Some(handle) => {
+            LAST_EXTERNAL.store(handle, Ordering::Relaxed);
+            TARGET.store(handle, Ordering::Relaxed);
+        }
+        None => {
+            if let Some(handle) = last_external() {
+                TARGET.store(handle, Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -234,10 +333,26 @@ pub fn restore_and_paste(handle: isize, delay_ms: u64) -> Result<()> {
             ));
         }
 
-        // Give the window manager a moment to finish the activation before the
-        // keystroke arrives; without this the input can be discarded or routed to
-        // the window that is still in the process of losing focus.
-        std::thread::sleep(Duration::from_millis(if cfg!(windows) { 40 } else { 180 }));
+        // Wait for the handover to actually finish. A fixed sleep was not
+        // enough: restoring a minimised window or switching away from an
+        // always-on-top one can take longer, and the keystroke then landed in the
+        // window that still had the focus — a paste that consumed its stack item
+        // and delivered nothing. The activation is only trusted once the target
+        // reports itself as foreground.
+        #[cfg(target_os = "linux")]
+        std::thread::sleep(Duration::from_millis(180));
+        #[cfg(not(target_os = "linux"))]
+        {
+            let deadline = std::time::Instant::now() + Duration::from_millis(1_500);
+            while !foreground_is(handle) {
+                if std::time::Instant::now() >= deadline {
+                    return Err(AppError::msg(
+                        "the window you copied into did not come to the front, so nothing was pasted",
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
     }
     // The stack's own shortcut is a chord — Alt+Shift+V — and the user is often
     // still holding it when the paste lands, which turns Ctrl+V into

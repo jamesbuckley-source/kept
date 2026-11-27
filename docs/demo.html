@@ -604,7 +604,7 @@
     <a href="#images">Images</a>
     <a href="#gifs">GIFs</a>
     <a href="#files">Files</a>
-    <a href="#stack">Paste stack</a>
+    <a href="#stack">Stacks</a>
     <a href="#type-map">Type map</a>
   </nav>
 
@@ -1523,7 +1523,7 @@ Start-Process explorer.exe $demo</code></pre>
     <section class="card" id="stack">
       <div class="section-head">
         <div>
-          <h2>Paste stack</h2>
+          <h2>Stacks</h2>
           <p>
             A queue of things to paste one at a time, in order. Copy a list below, then
             right-click the clip and choose <em>Split into stack items…</em>: every line
@@ -1736,13 +1736,16 @@ Note. This line is prose.</code><span class="badge badge-stack">Splits to 3</spa
         <li>Do the same on an archive under <em>Archives</em> and on a tag under <em>Tags</em>: both rename in place, and renaming a tag onto an existing tag's name merges them.</li>
         <li>Right-click a clip and open <em>Add to Archive</em>: <em>New archive…</em> should lead the submenu even when no archive exists yet. Use it and the clip should be filed in the new archive, which appears under <em>Archives</em> and not in the ordinary collection list.</li>
         <li>Turn on <em>Guess from context</em> and re-copy the low-confidence secret sample.</li>
-        <li>Copy the Paste stack bullet list, right-click the clip and choose <em>Split into stack items…</em>: the notice should say five items were queued, and the panel should list five numbered rows tagged <em>line</em> with no bullets. Pressing <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> in an editor pastes the first line there and the row disappears; the next press pastes the second.</li>
+        <li>Copy the Stacks bullet list, right-click the clip and choose <em>Split into stack items…</em>: the notice should say five items were queued, and the panel should list five numbered rows tagged <em>line</em> with no bullets. Pressing <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> in an editor pastes the first line there and the row disappears; the next press pastes the second.</li>
         <li>Split the emphasis sample: three items, and the asterisks are still there — <code>**Nothing else changes.**</code> comes back intact because a marker only counts when a space follows it. The <code>Note. This line is prose.</code> item keeps its full stop too.</li>
-        <li>Hover a clip in either layout and press the stacked-layers button: the count badge appears in the title bar, <em>Utilities → Paste stack</em> shows the same count, and the panel's × drops one row while <em>Clear all</em> empties it.</li>
-        <li>Right-click a collection and choose <em>Convert to paste stack…</em>; with something already queued the entry should read <em>Replace the stack (N)…</em>. Convert, then delete one of those clips from the history: its queued row goes away on its own.</li>
-        <li>Press the pop-out button in the panel's header: the queue moves into its own small frameless window that stays above other applications, with the same list. Close it with its × and the panel comes back in Kept, still listing the same items; nothing is lost or reordered.</li>
-        <li>Clear the <em>Paste stack shortcut</em> in <em>Settings → Activation</em>: the footer should read <em>No shortcut set</em>, <em>Paste next</em> still pastes, and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> does nothing anywhere.</li>
-        <li>Paste the whole queue until it is empty: the badge disappears, the panel shows the empty message, and pressing <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> then does nothing at all — no window, no error.</li>
+        <li>Hover a clip in either layout and press the stacked-layers button: the count badge appears in the title bar, <em>Utilities → Stacks</em> shows the same count, and the window's × drops one row while <em>Clear all</em> empties it.</li>
+        <li>Ctrl-click several clips and press <em>Stack</em> in the bulk bar: all of them should appear in the queue in the order they were selected, and the selection should clear.</li>
+        <li>Queue a paragraph and an image, then press <em>Copy all</em>: the footer should report the item and image counts, and one paste into a rich-text editor should bring back the words and the picture. The queue must still be listed afterwards. Queue a clip containing an emoji first: the picture must still arrive, which is what a rejected <code>\u</code> escape used to prevent.</li>
+        <li>With the same queue, press <em>Paste all</em> in an editor: the paragraph and the picture should both arrive, one after the other, the picture as a picture, and the queue must still be listed. Pressing it with nothing in front of Kept should refuse politely instead of pasting nowhere.</li>
+        <li>Right-click a collection and choose <em>Convert to Stacks…</em>; with something already queued the entry should read <em>Replace the stack (N)…</em>. Convert, then delete one of those clips from the history: its queued row goes away on its own.</li>
+        <li>Press the stack badge in the title bar, or <em>Utilities → Stacks</em>: the queue opens in its own small frameless window that stays above other applications, with the same list and three icon buttons at the bottom. Drag a file from Explorer onto that window: it is imported and queued, and the status line says how many. Close it with its × — the queue is kept and comes back from the same two places; nothing is lost or reordered.</li>
+        <li>Clear the <em>Stacks shortcut</em> in <em>Settings → Activation</em>: the footer should read <em>No shortcut set</em>, <em>Paste next</em> still pastes, and <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> does nothing anywhere.</li>
+        <li>Paste the whole queue until it is empty: the badge disappears, the window shows the empty message, and pressing <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> then does nothing at all — no window, no error.</li>
         <li>Turn on <em>Leave secrets out of history</em> and confirm flagged samples are skipped.</li>
         <li>Turn off <em>Paste with formatting</em> and confirm the rich sample pastes as plain text.</li>
       </ul>

@@ -84,8 +84,8 @@ interface SidebarProps {
   onRecord: () => void;
   /** How many items are queued in the paste stack. */
   stackCount: number;
-  /** Opens the paste stack panel hanging off the row that raised it. */
-  onOpenStack: (anchor: { x: number; y: number }) => void;
+  /** Opens the paste stack in its own window. */
+  onOpenStack: () => void;
   /** The capture type the sidebar's split button repeats. */
   captureMode: CaptureMode;
   onRememberCaptureMode: (mode: CaptureMode) => void;
@@ -1139,14 +1139,11 @@ export function Sidebar({
       >
         <NavItem
           icon={<IconStack className="size-3.5" />}
-          label="Paste stack"
+          label="Stacks"
           title="The clips queued up to paste one at a time"
           count={stackCount > 0 ? stackCount : undefined}
           active={false}
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            onOpenStack({ x: rect.left, y: rect.bottom + 4 });
-          }}
+          onClick={onOpenStack}
         />
         <NavItem
           icon={<IconEmoji className="size-3.5" />}

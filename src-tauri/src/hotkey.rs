@@ -146,7 +146,7 @@ impl StackAction {
 
     pub fn label(self) -> &'static str {
         match self {
-            StackAction::Paste => "the paste stack shortcut",
+            StackAction::Paste => "the Stacks shortcut",
         }
     }
 
@@ -527,7 +527,7 @@ mod tests {
             "the summon key and the paste stack default, nothing else"
         );
         assert!(required.iter().any(|(owner, text, _)| {
-            *owner == "the paste stack shortcut" && *text == DEFAULT_STACK_HOTKEY
+            *owner == "the Stacks shortcut" && *text == DEFAULT_STACK_HOTKEY
         }));
     }
 
@@ -553,7 +553,7 @@ mod tests {
         let without = Bindings::from_settings(&settings).without_stack_paste();
         let required = without.required().expect("the rest still registers");
         assert_eq!(required.len(), 2, "the summon key and the region key");
-        assert!(!required.iter().any(|(owner, _, _)| *owner == "the paste stack shortcut"));
+        assert!(!required.iter().any(|(owner, _, _)| *owner == "the Stacks shortcut"));
     }
 
     #[test]

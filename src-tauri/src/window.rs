@@ -441,7 +441,7 @@ fn open_stack_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         // Same reason as the settings window: the URL says which window this is.
         tauri::WebviewUrl::App("index.html?window=stack".into()),
     )
-    .title("Paste stack")
+    .title("Stacks")
     .inner_size(320.0, 460.0)
     .min_inner_size(260.0, 240.0)
     .background_color(theme_background(app))

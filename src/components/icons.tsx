@@ -120,6 +120,32 @@ export function IconCopy({ className }: IconProps) {
   );
 }
 
+/** Paste one: a clipboard with an arrow leaving it. */
+export function IconPaste({ className }: IconProps) {
+  return frame(
+    className,
+    <>
+      <path d="M3.2 4.6V3.4a1.3 1.3 0 0 1 1.3-1.3h5.4a1.3 1.3 0 0 1 1.3 1.3v9.2a1.3 1.3 0 0 1-1.3 1.3H4.5a1.3 1.3 0 0 1-1.3-1.3v-1.2" />
+      <path d="M2.2 8.6h5.6" />
+      <path d="M9.4 6.2l2.4 2.4-2.4 2.4" />
+    </>,
+  );
+}
+
+/** Paste every queued item: the same arrow, over a stack of lines. */
+export function IconPasteAll({ className }: IconProps) {
+  return frame(
+    className,
+    <>
+      <path d="M4.4 4.4V3.2a1.2 1.2 0 0 1 1.2-1.2h4.6a1.2 1.2 0 0 1 1.2 1.2v8.6a1.2 1.2 0 0 1-1.2 1.2H5.6" />
+      <path d="M2.4 6.2h5.8" />
+      <path d="M2.4 8.4h4.2" />
+      <path d="M2.4 10.6h4.2" />
+      <path d="M9.8 8.2l2 2-2 2" />
+    </>,
+  );
+}
+
 export function IconText({ className }: IconProps) {
   return frame(
     className,

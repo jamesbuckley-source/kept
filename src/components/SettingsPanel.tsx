@@ -1645,8 +1645,8 @@ export function SettingsPanel({
               }
             />
             <Row
-              label="Paste stack shortcut"
-              hint="Pastes the next item in the paste stack into the window you were in, and uses it up. Leave it empty to paste only from the stack panel."
+              label="Stacks shortcut"
+              hint="Pastes the next item in Stacks into the window you were in, and uses it up. Leave it empty to paste only from the Stacks panel."
               control={
                 <HotkeyField
                   optional

@@ -343,6 +343,40 @@ pub struct SplitOutcome {
     pub queued: usize,
 }
 
+/// What "Copy all" put into one clipboard record.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackCopyOutcome {
+    /// Stack items that made it into the record.
+    pub items: usize,
+    /// Images carried inside the rich-text flavours.
+    pub images: usize,
+    /// Images that only contributed their path (too large, or no file on disk).
+    pub skipped: usize,
+}
+
+/// What a drop onto the Stacks window took: the clips queued, and the queue size
+/// afterwards.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackDropOutcome {
+    /// Clips this drop pushed onto the queue.
+    pub queued: usize,
+    /// The whole queue after the push.
+    pub total: usize,
+}
+
+/// The row a typed clip was stored as, and whether it was new.
+///
+/// Auto-save needs the distinction: typing text that is already in the history
+/// must not start rewriting that older clip.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypedClipOutcome {
+    pub id: i64,
+    pub created: bool,
+}
+
 /// Insert payload produced by capture.
 #[derive(Debug, Clone)]
 pub struct NewClip {

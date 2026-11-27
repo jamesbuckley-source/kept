@@ -25,9 +25,12 @@ import type {
   SaveFormat,
   SaveReport,
   Settings,
+  StackCopyOutcome,
+  StackDropOutcome,
   StackEntry,
   SplitOutcome,
   Stats,
+  TypedClipOutcome,
   VaultStatus,
   StorageInfo,
   Tag,
@@ -418,6 +421,22 @@ export function stackPasteNext(): Promise<boolean> {
   return invoke<boolean>("stack_paste_next");
 }
 
+/**
+ * Copies every queued item into one clipboard record, leaving the queue alone.
+ * Text and images travel as plain text, HTML and RTF.
+ */
+export function stackCopyAll(): Promise<StackCopyOutcome> {
+  return invoke<StackCopyOutcome>("stack_copy_all");
+}
+
+/**
+ * Pastes every queued item, one at a time, each in its own native shape.
+ * The queue is left alone, like Copy all.
+ */
+export function stackPasteAll(): Promise<StackCopyOutcome> {
+  return invoke<StackCopyOutcome>("stack_paste_all");
+}
+
 /** Puts the text recognised in an image on the clipboard instead of the image. */
 export function copyOcrText(id: number, hideWindow = true): Promise<void> {
   return invoke("copy_ocr_text", { id, hideWindow });
@@ -489,6 +508,11 @@ export function importDroppedFiles(paths: string[]): Promise<number> {
   return invoke<number>("import_dropped_files", { paths });
 }
 
+/** Imports dropped files and pushes the resulting clips onto the queue. */
+export function stackDropFiles(paths: string[]): Promise<StackDropOutcome> {
+  return invoke<StackDropOutcome>("stack_drop_files", { paths });
+}
+
 /** Opens the settings page in its own decorated window. */
 export function openSettingsWindow(): Promise<void> {
   return invoke("open_settings_window");
@@ -521,10 +545,12 @@ export function openStickyClipWindow(id: number): Promise<void> {
 
 /**
  * Stores typed text as a new clip without touching the clipboard.
- * Returns the id of the inserted (or de-duplicated) clip.
+ *
+ * `created` is false when the text matched a clip that was already stored, so
+ * auto-save knows not to start rewriting that older clip.
  */
-export function createTextClip(text: string): Promise<number> {
-  return invoke<number>("create_text_clip", { text });
+export function createTextClip(text: string): Promise<TypedClipOutcome> {
+  return invoke<TypedClipOutcome>("create_text_clip", { text });
 }
 
 export function deleteClip(id: number): Promise<number> {

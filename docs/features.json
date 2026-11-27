@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-27T18:32:31.793Z",
+  "updatedAt": "2026-11-27T20:17:52.626Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3927,11 +3927,11 @@
       "id": "feature-theme-system",
       "title": "Feature - Theme system",
       "area": "General",
-      "status": "backlog",
+      "status": "planned",
       "summary": "Theme system",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-27T17:08:21.299Z"
+      "updatedAt": "2026-11-27T20:17:52.626Z"
     },
     {
       "id": "cross-device-sync",
@@ -4192,6 +4192,44 @@
         "src/App.tsx"
       ],
       "updatedAt": "2026-11-27T18:18:14.722Z"
+    },
+    {
+      "id": "pictures-paste-into-a-folder",
+      "title": "A copied picture pastes into a folder as a file",
+      "area": "General",
+      "status": "shipped",
+      "summary": "Copying an image published a bitmap, the registered PNG format and an HTML image, so editors took it and Explorer took nothing: pasting a copied screenshot into a folder did not create a file. The picture is now also staged in a temp folder under the name 'Save as…' would give it and published as CF_HDROP alongside the other flavours, which is what a folder needs. The stage is replaced on the next picture copy, which is as long as that clipboard content can be pasted.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/clipboard.rs",
+        "src-tauri/src/commands.rs"
+      ],
+      "updatedAt": "2026-11-27T19:52:17.853Z"
+    },
+    {
+      "id": "dropped-svg-stays-a-file",
+      "title": "A dropped SVG is a file, not text",
+      "area": "General",
+      "status": "shipped",
+      "summary": "A .svg parses as UTF-8, so dropping one read it as a text file and it became a text clip: the stack row showed markup and pasting it pasted the markup. Vector pictures are now excluded from the text sniff and land as file clips, which paste the file itself — into a folder, into an image editor, or as its path where only text is accepted.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/commands.rs"
+      ],
+      "updatedAt": "2026-11-27T19:52:17.853Z"
+    },
+    {
+      "id": "stack-paste-next-icon-and-text",
+      "title": "Paste next reads as an icon and a label",
+      "area": "General",
+      "status": "shipped",
+      "summary": "Paste next is the action the panel expects a press of, so it carries its word beside the icon and takes the free width, while Paste all and Copy all stay compact icon buttons with tooltips. Icon-only buttons left the primary action indistinguishable from the two beside it.",
+      "owner": "",
+      "references": [
+        "src/components/PasteStackWindow.tsx",
+        "src/components/icons.tsx"
+      ],
+      "updatedAt": "2026-11-27T19:52:17.853Z"
     }
   ]
 }
