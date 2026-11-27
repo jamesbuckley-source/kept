@@ -191,7 +191,7 @@ export function recordToolchain(): Promise<RecordToolchain> {
   return invoke<RecordToolchain>("record_toolchain");
 }
 
-/** Installs FFmpeg with winget and answers with the last line of its output. */
+/** Installs FFmpeg with winget; macOS and Linux answer with what to run instead. */
 export function installFfmpeg(): Promise<string> {
   return invoke<string>("install_ffmpeg");
 }

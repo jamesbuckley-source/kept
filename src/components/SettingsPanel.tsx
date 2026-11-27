@@ -16,7 +16,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { formatBytes, formatCount, formatRelative } from "../lib/format";
-import { isMac } from "../lib/platform";
+import { isLinux, isMac } from "../lib/platform";
 import { Row } from "./SettingsRow";
 import {
   errorMessage,
@@ -713,9 +713,13 @@ function recordEncoderHint(toolchain: RecordToolchain | null, error: string | nu
   if (error) return error;
   if (!toolchain) return "Looking for FFmpeg…";
   if (toolchain.ready) return `Found: ${toolchain.path ?? "ffmpeg"}`;
-  return isMac
-    ? "FFmpeg was not found. Install it from Terminal with `brew install ffmpeg`, then press Re-check; without it a recording has nothing to encode with."
-    : "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
+  if (isMac) {
+    return "FFmpeg was not found. Install it from Terminal with `brew install ffmpeg`, then press Re-check; without it a recording has nothing to encode with.";
+  }
+  if (isLinux) {
+    return "FFmpeg was not found. Install it with your package manager (`sudo apt install ffmpeg`, or the equivalent for your distribution), then press Re-check; without it a recording has nothing to encode with.";
+  }
+  return "FFmpeg was not found. Install runs winget; without it a recording has nothing to encode with.";
 }
 
 function CaptureShortcutColumn({
@@ -1039,9 +1043,10 @@ export function SettingsPanel({
     setInstalling(true);
     setEncoderError(null);
     try {
-      // macOS has no installer this app can run: the button re-checks instead, so
-      // a fresh `brew install ffmpeg` is picked up without restarting.
-      if (!isMac) await installFfmpeg();
+      // macOS and Linux have no installer this app can run: the button re-checks
+      // instead, so a fresh `brew install ffmpeg` or an apt-installed copy is
+      // picked up without restarting.
+      if (!isMac && !isLinux) await installFfmpeg();
     } catch (e) {
       setEncoderError(errorMessage(e));
     } finally {
@@ -1897,7 +1902,7 @@ export function SettingsPanel({
                 >
                   {installing
                     ? "Installing…"
-                    : toolchain?.ready || isMac
+                    : toolchain?.ready || isMac || isLinux
                       ? "Re-check"
                       : "Install FFmpeg"}
                 </button>
@@ -1908,7 +1913,9 @@ export function SettingsPanel({
               hint={
                 isMac
                   ? "Leave empty to use FFmpeg on PATH or in Homebrew's bin. A full path is used instead, for a build kept somewhere else."
-                  : "Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
+                  : isLinux
+                    ? "Leave empty to use the FFmpeg on PATH. A full path is used instead, for a build kept somewhere else."
+                    : "Leave empty to use the FFmpeg on PATH. A full path to ffmpeg.exe is used instead, for a build kept somewhere else."
               }
               control={
                 <input
@@ -1917,7 +1924,9 @@ export function SettingsPanel({
                   onKeyDown={(event) => event.stopPropagation()}
                   spellCheck={false}
                   aria-label="Encoder path"
-                  placeholder={isMac ? "/opt/homebrew/bin/ffmpeg" : "C:\\ffmpeg\\bin\\ffmpeg.exe"}
+                  placeholder={
+                    isMac ? "/opt/homebrew/bin/ffmpeg" : isLinux ? "/usr/bin/ffmpeg" : "C:\\ffmpeg\\bin\\ffmpeg.exe"
+                  }
                   className="w-52 rounded border border-edge bg-panel-2 px-2 py-1 font-mono text-[10px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
                 />
               }

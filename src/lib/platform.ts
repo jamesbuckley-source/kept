@@ -6,3 +6,6 @@
  * trip. WKWebView reports "Macintosh", WebKitGTK "X11; Linux", WebView2 "Windows NT".
  */
 export const isMac = /Mac/i.test(navigator.userAgent);
+
+/** The Linux half of the same question, for the hints that differ by platform. */
+export const isLinux = !isMac && /Linux/i.test(navigator.userAgent);

@@ -4520,6 +4520,10 @@ mod linux_tests {
     /// The port's capture path is `maim` plus a decode, so this is the test that
     /// proves it end to end. It needs a running X server; with no display the
     /// bounds come back empty and the check stands down.
+    ///
+    /// A desktop with nothing open is a legitimately black picture, and the dev
+    /// container's is, so "not blank" proves nothing there. The capture is
+    /// checked against a window of a known colour instead.
     #[test]
     fn the_root_window_is_captured_as_an_rgba_image() {
         let bounds = desktop_bounds();
@@ -4527,16 +4531,77 @@ mod linux_tests {
             eprintln!("no X display: skipping the capture check");
             return;
         }
+        let probe = map_probe();
         let clip = grab_desktop().expect("the root window should be captured");
         match clip {
             ClipContent::Image { width, height, rgba } => {
                 assert_eq!(width, bounds.width() as u32, "captured width");
                 assert_eq!(height, bounds.height() as u32, "captured height");
                 assert_eq!(rgba.len(), width as usize * height as usize * 4);
-                assert!(!looks_blank(&rgba), "the captured screen was blank");
+                if let Some((_conn, (x, y))) = probe {
+                    let at = (y as usize * width as usize + x as usize) * 4;
+                    let [_, red, green, blue] = PROBE_COLOUR.to_be_bytes();
+                    assert_eq!(
+                        &rgba[at..at + 3],
+                        &[red, green, blue],
+                        "the probe window should be in the capture at {x},{y}"
+                    );
+                } else {
+                    // No X connection for the probe: fall back to the older check.
+                    assert!(!looks_blank(&rgba), "the captured screen was blank");
+                }
             }
             _ => panic!("a screen capture should be an image"),
         }
+    }
+
+    /// The red that [`map_probe`] paints the probe window with, as `0xRRGGBB`.
+    const PROBE_COLOUR: u32 = 0x00ff_0000;
+    /// Where the probe window sits, and how big it is.
+    const PROBE_AT: (i16, i16) = (320, 240);
+    const PROBE_SIZE: u16 = 64;
+
+    /// Maps a small window of a known colour over the root and hands back the
+    /// connection that owns it plus the point in the middle of it.
+    ///
+    /// The connection has to outlive the capture — dropping it destroys the
+    /// window — so the caller holds the pair until it has read the pixels. The
+    /// window is override-redirect, so no window manager decorates or moves it.
+    fn map_probe() -> Option<(x11rb::rust_connection::RustConnection, (u32, u32))> {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{
+            ConnectionExt as _, CreateWindowAux, WindowClass,
+        };
+
+        let (conn, screen_num) = x11rb::connect(None).ok()?;
+        let screen = &conn.setup().roots[screen_num];
+        let window = conn.generate_id().ok()?;
+        conn.create_window(
+            x11rb::COPY_FROM_PARENT as u8,
+            window,
+            screen.root,
+            PROBE_AT.0,
+            PROBE_AT.1,
+            PROBE_SIZE,
+            PROBE_SIZE,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &CreateWindowAux::new()
+                .background_pixel(PROBE_COLOUR)
+                .override_redirect(1),
+        )
+        .ok()?;
+        conn.map_window(window).ok()?;
+        conn.flush().ok()?;
+        // The server paints the new window before maim reads the screen, but it
+        // is another client, so give it a moment rather than racing it.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let centre = (
+            u32::from(PROBE_AT.0 as u16) + u32::from(PROBE_SIZE) / 2,
+            u32::from(PROBE_AT.1 as u16) + u32::from(PROBE_SIZE) / 2,
+        );
+        Some((conn, centre))
     }
 
     /// A scrolling capture reads the picked window's geometry and the pointer
