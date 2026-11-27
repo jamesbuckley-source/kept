@@ -102,6 +102,12 @@ same tools, snapping, readouts and keys as the Windows version.
 - **Tray menu:** added **“Open Kept”** as the top tray menu item to quickly show/focus
   the main window.
 
+## Linux packages
+
+The Linux build for 1.2.0 stopped on a compile error in the picture-clipboard
+code, which is Windows-only; 1.2.1 is the same release with that fixed, so the
+`.deb`, `.AppImage` and `.rpm` packages are attached here.
+
 ## Packaging and docs
 
 - Release automation builds and uploads Linux packages for tagged releases.

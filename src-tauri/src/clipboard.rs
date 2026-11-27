@@ -1458,6 +1458,20 @@ pub fn write_picture_content(
     Ok(hashing::of_content(content))
 }
 
+/// Publishes `content` as a picture, answering its content hash.
+///
+/// Windows has the richer story — a DIB, the registered PNG format, HTML and a
+/// staged file. Everywhere else the port's own clipboard writer is the whole
+/// answer, so this is the same call the text path makes.
+#[cfg(not(windows))]
+pub fn write_picture_content(
+    content: &ClipContent,
+    _png: Option<&[u8]>,
+    _file_name: Option<&str>,
+) -> Result<String> {
+    write_flavoured(content, None, None)
+}
+
 /// Stages a copied picture as a real file, so a paste into a folder has something
 /// to create.
 ///
@@ -1476,6 +1490,7 @@ fn stage_picture(png: &[u8], name: &str) -> Option<std::path::PathBuf> {
 
 /// The last path component of `name`, with anything a file name cannot hold
 /// replaced, so a suggested name can never escape the staging folder.
+#[cfg(windows)]
 fn file_name_of(name: &str) -> String {
     let leaf = name
         .rsplit(['/', '\\'])

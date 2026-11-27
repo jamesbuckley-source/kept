@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-27T20:17:52.626Z",
+  "updatedAt": "2026-11-27T20:39:12.630Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3928,10 +3928,10 @@
       "title": "Feature - Theme system",
       "area": "General",
       "status": "planned",
-      "summary": "Theme system",
+      "summary": "Currently we have 2 themes, light and dark as well as the ability to edit them. I'd like to turn this into a full theme system, with several themes pre-loaded and a method to add your own theme (in a zip file). \n\nOutline how this will work, then review with me.",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-27T20:17:52.626Z"
+      "updatedAt": "2026-11-27T20:39:12.630Z"
     },
     {
       "id": "cross-device-sync",
@@ -4230,6 +4230,16 @@
         "src/components/icons.tsx"
       ],
       "updatedAt": "2026-11-27T19:52:17.853Z"
+    },
+    {
+      "id": "show-latest-updates",
+      "title": "\"Show Latest updates\"",
+      "area": "General",
+      "status": "planned",
+      "summary": "\"Show Latest updates\" content needs updating for 1.2",
+      "owner": "",
+      "references": [],
+      "updatedAt": "2026-11-27T20:37:56.795Z"
     }
   ]
 }
