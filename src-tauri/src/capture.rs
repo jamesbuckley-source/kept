@@ -4569,9 +4569,7 @@ mod linux_tests {
     /// window is override-redirect, so no window manager decorates or moves it.
     fn map_probe() -> Option<(x11rb::rust_connection::RustConnection, (u32, u32))> {
         use x11rb::connection::Connection;
-        use x11rb::protocol::xproto::{
-            ConnectionExt as _, CreateWindowAux, WindowClass,
-        };
+        use x11rb::protocol::xproto::{ConnectionExt as _, CreateWindowAux, WindowClass};
 
         let (conn, screen_num) = x11rb::connect(None).ok()?;
         let screen = &conn.setup().roots[screen_num];
