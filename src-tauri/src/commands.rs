@@ -2620,6 +2620,7 @@ fn shortcut_patch(settings: &Settings) -> serde_json::Value {
         "captureScreenHotkey": settings.capture_screen_hotkey,
         "captureScrollingHotkey": settings.capture_scrolling_hotkey,
         "captureTextHotkey": settings.capture_text_hotkey,
+        "capturePreviousHotkey": settings.capture_previous_hotkey,
         "pickColorHotkey": settings.pick_color_hotkey,
         "rulerHotkey": settings.ruler_hotkey,
         "newClipHotkey": settings.new_clip_hotkey,
@@ -3848,6 +3849,44 @@ mod tests {
         let body = text_clip_body(&text).expect("the fixture has words in it");
         assert!(body.to_lowercase().contains("copypaste"), "got {body:?}");
         assert_eq!(body, body.trim(), "the clip holds no edge whitespace");
+    }
+
+    /// The revert patch that runs when a combination is refused has to carry
+    /// every shortcut the settings column can write, or the refused one stays on
+    /// that action while the others go back. `capturePreviousHotkey` was missing.
+    #[test]
+    fn a_rejected_shortcut_puts_back_every_shortcut_it_touched() {
+        let shortcuts = serde_json::json!({
+            "hotkey": "Alt+V",
+            "pauseHotkey": "Ctrl+Alt+P",
+            "newClipHotkey": "Ctrl+Alt+N",
+            "captureRegionHotkey": "Ctrl+Alt+1",
+            "captureWindowHotkey": "Ctrl+Alt+2",
+            "captureScreenHotkey": "Ctrl+Alt+3",
+            "captureScrollingHotkey": "Ctrl+Alt+4",
+            "captureTextHotkey": "Ctrl+Alt+5",
+            "capturePreviousHotkey": "Ctrl+Alt+6",
+            "pickColorHotkey": "Ctrl+Alt+7",
+            "rulerHotkey": "Ctrl+Alt+8",
+            "recordHotkey": "Ctrl+Alt+9",
+            "recordStopHotkey": "Ctrl+Alt+0",
+            "recordPauseHotkey": "Ctrl+Shift+9",
+            "stackPasteHotkey": "Ctrl+Alt+V",
+        });
+        let settings: crate::settings::Settings =
+            serde_json::from_value(shortcuts.clone()).expect("the fixture is a settings row");
+
+        let restored = serde_json::to_value(
+            serde_json::from_value::<crate::settings::Settings>(super::shortcut_patch(&settings))
+                .expect("the revert patch is a settings row"),
+        )
+        .unwrap();
+
+        // Every key in the fixture is a field the settings column writes, so the
+        // patch that runs after a refusal has to carry the same value back.
+        for (key, value) in shortcuts.as_object().expect("an object") {
+            assert_eq!(restored.get(key), Some(value), "{key} was not put back");
+        }
     }
 
     #[test]
