@@ -1,7 +1,3 @@
-<!-- Notes for the next release. The Release workflow publishes this file as the
-     GitHub release body and as the `notes` field of latest.json, which is what
-     Kept's update window shows, so rewrite it before tagging. -->
-
 ## Stacks live in their own window
 
 The paste queue - formerly "Paste stack" - is now one thing instead of three. The
