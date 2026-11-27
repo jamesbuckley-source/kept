@@ -673,6 +673,7 @@ const CAPTURE_SHORTCUTS = [
   { key: "captureWindowHotkey", label: "Window" },
   { key: "captureScreenHotkey", label: "Full screen" },
   { key: "captureScrollingHotkey", label: "Scrolling" },
+  { key: "captureTextHotkey", label: "Text" },
   { key: "capturePreviousHotkey", label: "Previous area" },
   { key: "pickColorHotkey", label: "Color Picker" },
   { key: "rulerHotkey", label: "Onscreen ruler" },
@@ -2086,7 +2087,7 @@ export function SettingsPanel({
           <Section title="Capture">
             <Row
               label="Capture shortcuts"
-              hint="Region, window, full-screen, scrolling, the previous area, the color picker and the onscreen ruler can each have their own combination. Click a field and press the keys; leave it empty for none."
+              hint="Region, window, full-screen, scrolling, text, the previous area, the color picker and the onscreen ruler can each have their own combination. Click a field and press the keys; leave it empty for none."
               control={<CaptureShortcutColumn settings={settings} onCommit={onPatch} />}
             />
             <Row

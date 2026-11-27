@@ -28,6 +28,7 @@ const ID_CAPTURE_REGION: &str = "capture-region";
 const ID_CAPTURE_WINDOW: &str = "capture-window";
 const ID_CAPTURE_SCREEN: &str = "capture-screen";
 const ID_CAPTURE_SCROLLING: &str = "capture-scrolling";
+const ID_CAPTURE_TEXT: &str = "capture-text";
 /// Repeats the area the last region, window or full-screen capture covered.
 const ID_CAPTURE_PREVIOUS: &str = "capture-previous";
 const ID_CAPTURE_COLOR: &str = "capture-color";
@@ -110,12 +111,13 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let capture_window = MenuItem::with_id(app, ID_CAPTURE_WINDOW, "Window", true, None::<&str>)?;
     let screen = MenuItem::with_id(app, ID_CAPTURE_SCREEN, "Full screen", true, None::<&str>)?;
     let scrolling = MenuItem::with_id(app, ID_CAPTURE_SCROLLING, "Scrolling", true, None::<&str>)?;
+    let text = MenuItem::with_id(app, ID_CAPTURE_TEXT, "Capture text", true, None::<&str>)?;
     let previous = MenuItem::with_id(app, ID_CAPTURE_PREVIOUS, "Previous area", true, None::<&str>)?;
     let capture = Submenu::with_items(
         app,
         "Capture",
         true,
-        &[&region, &capture_window, &screen, &scrolling, &previous],
+        &[&region, &capture_window, &screen, &scrolling, &text, &previous],
     )?;
 
     let pause_state = crate::commands::pause_state(app);
@@ -193,6 +195,7 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
         ID_CAPTURE_SCROLLING => {
             crate::commands::run_capture_shortcut(app, CaptureAction::Scrolling)
         }
+        ID_CAPTURE_TEXT => crate::commands::run_capture_shortcut(app, CaptureAction::Text),
         ID_CAPTURE_COLOR => crate::commands::run_capture_shortcut(app, CaptureAction::Color),
         ID_CAPTURE_PREVIOUS => {
             crate::commands::run_capture_shortcut(app, CaptureAction::PreviousArea)

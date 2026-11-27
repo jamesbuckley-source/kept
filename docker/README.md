@@ -95,6 +95,7 @@ Implemented for X11:
 | Animated GIFs and videos behind a copy | a browser's "Copy image" puts only the frame on screen on the clipboard, so the `text/html` target is read with `xclip` and the asset it names is fetched and kept beside the frame; copying that clip publishes the file as `text/uri-list`, so pasting keeps every frame |
 | Full-screen capture | `maim --hidecursor` → RGBA (`capture_screen`, covered by `capture::linux_tests`) |
 | Region capture | `maim --select`, whose own X11 overlay is the drag surface |
+| Capture text | the same region capture, then `tesseract` over the pixels; the words are stored as a text clip instead of the picture |
 | Window capture | `xdotool selectwindow` picks the window, `maim --window <id>` grabs it |
 | Scrolling capture | the same tested stitcher as Windows, driven by `maim -g` frames and `xdotool` wheel/Page Down; the pointer is parked outside the page between steps, and the window's own bottom edge is measured out of each frame so a join never repeats it as a light line |
 | Colour picker | the screen is frozen, `xdotool`'s crosshair takes the click, and the pixel under it is read back |

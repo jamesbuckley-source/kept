@@ -2,6 +2,20 @@
      GitHub release body and as the `notes` field of latest.json, which is what
      Kept's update window shows, so rewrite it before tagging. -->
 
+## Capture text
+
+A new capture kind takes the same region drag a screenshot does, but keeps the
+words instead of the picture: frame a log line, an error dialog or a passage in a
+PDF and it lands in history as a text clip, already on the clipboard, ready to
+paste into an editor. Recognition is the same on-device engine that already reads
+text out of screenshots — Windows' OCR, Vision on macOS, `tesseract` on Linux —
+and an area with no words in it adds nothing and says so.
+
+**Capture text** sits in the capture menu, the tray menu and *Settings → Capture
+→ Capture shortcuts*, where it can be given a shortcut of its own. It behaves as
+the other kinds do: the app hides for the capture, the delay applies, and Print
+Screen runs it when it is the remembered capture type.
+
 ## Linux support (Beta)
 
 Kept can now be built and packaged for Linux (X11) as a **Beta**. Tagged releases

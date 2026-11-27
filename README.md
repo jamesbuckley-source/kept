@@ -142,7 +142,7 @@ theme and the image editor. It can be re-run from Settings at any time.*
 - **Annotates** clips with a searchable note, and edits a text clip in place from the preview pane.
 - **Samples colors** from anywhere on screen with the eyedropper in the title bar; a magnifier
   beside the crosshair previews the pixel and its hex/RGB values before you click.
-- **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)).
+- **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)); **Capture text** keeps the words recognised in a dragged region as a text clip instead of the picture.
 - **Measures the screen** with an onscreen ruler: drag distances and boxes, click angles, drop
   guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. It is
   available on Windows and on Linux (X11). Its icon-only toolbar names
@@ -299,6 +299,7 @@ clicking the field and pressing the keys; an empty field means none:
 | Window capture | *Settings → Capture → Capture shortcuts* |
 | Full-screen capture | *Settings → Capture → Capture shortcuts* |
 | Scrolling capture | *Settings → Capture → Capture shortcuts* |
+| Text capture | *Settings → Capture → Capture shortcuts* |
 | Capture the previous area | *Settings → Capture → Capture shortcuts* |
 | Colour picker | *Settings → Capture → Capture shortcuts* |
 | Onscreen ruler | *Settings → Capture → Capture shortcuts* |
@@ -851,13 +852,18 @@ view with the new swatch selected.
 
 ## Screen capture
 
-One capture button in the title bar repeats the kind you used last; its chevron opens all four —
-**Region**, **Window**, **Full screen** and **Scrolling** — plus **Capture the previous area** and
-**Capture Delay Settings…**. Window captures read UI Automation so the page comes out without the tab
-strip or border, scrolling capture wheels the window and stitches only the new rows, and a delay
-counts down in the corner so a menu can be opened first. The result is an ordinary image clip —
-thumbnail, OCR pass, history entry — and it is left on the clipboard, the way the Snipping Tool
-leaves its own.
+One capture button in the title bar repeats the kind you used last; its chevron opens all five —
+**Region**, **Window**, **Full screen**, **Scrolling** and **Text** — plus **Capture the previous
+area** and **Capture Delay Settings…**. Window captures read UI Automation so the page comes out
+without the tab strip or border, scrolling capture wheels the window and stitches only the new rows,
+and a delay counts down in the corner so a menu can be opened first. The result is an ordinary image
+clip — thumbnail, OCR pass, history entry — and it is left on the clipboard, the way the Snipping
+Tool leaves its own.
+
+**Text** is the exception: it takes the same region drag, but the recognised words are stored as a
+text clip instead of the picture, so a block of text on screen — a log line, an error dialog, a
+passage in a PDF — pastes straight into an editor. Nothing is read if the area holds no words, and
+the recognition runs on the machine: the Windows engine, Vision on macOS, `tesseract` on Linux.
 
 ![The capture menu](docs/screenshots/capture-menu.png)
 

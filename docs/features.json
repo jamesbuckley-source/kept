@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-26T22:13:22.412Z",
+  "updatedAt": "2026-11-27T02:34:57.192Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3797,13 +3797,13 @@
     },
     {
       "id": "auto-install-keptcraft-as-part-of-setup-wizard",
-      "title": "Auto Install KeptCraft as part of setup wizard",
+      "title": "Auto Install KeptCraft as part of setup wizard and settings",
       "area": "General",
       "status": "backlog",
-      "summary": "",
+      "summary": "Auto Install KeptCraft as part of setup wizard and as an option in the settings page.",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-21T03:44:47.601Z"
+      "updatedAt": "2026-11-27T02:34:18.998Z"
     },
     {
       "id": "keep-x11-code-out-of-the-macos-build",
@@ -3875,6 +3875,23 @@
         "README.md"
       ],
       "updatedAt": "2026-11-26T22:13:22.411Z"
+    },
+    {
+      "id": "add-new-screenshot-mode-capture-text",
+      "title": "Add new screenshot mode \"Capture Text\"",
+      "area": "Capture",
+      "status": "shipped",
+      "summary": "Capture text takes the region selector every screenshot already uses and stores the text recognised inside the rectangle as a text clip instead of the image, put on the clipboard and into history. Recognition reuses the on-device engine that reads screenshots (Windows OCR, Vision on macOS, tesseract on Linux), so it works on all three platforms; an area with no words adds nothing and the UI says so. Available from the capture menus, the tray, the capture-mode split button, Print Screen and its own opt-in shortcut.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/commands.rs",
+        "src-tauri/src/ocr.rs",
+        "src-tauri/src/tray.rs",
+        "src-tauri/src/hotkey.rs",
+        "src/components/TitleBar.tsx",
+        "src/components/CaptureBar.tsx"
+      ],
+      "updatedAt": "2026-11-27T02:34:57.192Z"
     }
   ]
 }

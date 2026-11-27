@@ -171,6 +171,7 @@ pub fn run() {
             commands::capture_whole_screen,
     commands::capture_previous_area,
     commands::capture_scrolling_window,
+    commands::capture_text_region,
     commands::cancel_capture_delay,
     commands::permissions,
     commands::request_permission,

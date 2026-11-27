@@ -357,6 +357,9 @@ pub struct Settings {
     pub capture_screen_hotkey: String,
     /// Shortcut that captures a scrolling window; empty means none.
     pub capture_scrolling_hotkey: String,
+    /// Shortcut that captures a region and keeps the text found in it; empty
+    /// means none.
+    pub capture_text_hotkey: String,
     /// Shortcut for the screen colour picker; empty means none.
     pub pick_color_hotkey: String,
     /// Shortcut that opens the onscreen ruler; empty means none.
@@ -428,7 +431,7 @@ pub struct Settings {
     pub capture_images: bool,
     pub capture_files: bool,
     /// Screenshot mode the header button remembers: "region", "window",
-    /// "screen" or "scrolling". Unknown values fall back to "region".
+    /// "screen", "scrolling" or "text". Unknown values fall back to "region".
     pub capture_mode: String,
     /// How the ruler prints measurements: "physical", "dip" or "both".
     pub ruler_units: String,
@@ -612,6 +615,7 @@ impl Default for Settings {
             capture_window_hotkey: String::new(),
             capture_screen_hotkey: String::new(),
             capture_scrolling_hotkey: String::new(),
+            capture_text_hotkey: String::new(),
             pick_color_hotkey: String::new(),
             ruler_hotkey: String::new(),
             capture_previous_hotkey: String::new(),
@@ -797,7 +801,7 @@ impl Settings {
         }
         if !matches!(
             self.capture_mode.as_str(),
-            "region" | "window" | "screen" | "scrolling"
+            "region" | "window" | "screen" | "scrolling" | "text"
         ) {
             self.capture_mode = "region".into();
         }
@@ -836,6 +840,7 @@ impl Settings {
             &mut self.capture_window_hotkey,
             &mut self.capture_screen_hotkey,
             &mut self.capture_scrolling_hotkey,
+            &mut self.capture_text_hotkey,
             &mut self.pick_color_hotkey,
             &mut self.ruler_hotkey,
             &mut self.capture_previous_hotkey,

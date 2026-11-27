@@ -13,6 +13,7 @@ import {
   IconRegionCapture,
   IconRuler,
   IconScrollCapture,
+  IconTextCapture,
   IconWindowCapture,
 } from "./icons";
 import type { CaptureMode } from "../lib/types";
@@ -34,6 +35,8 @@ interface CaptureBarProps {
   /** Hides the window and repeats the area the last capture covered. */
   onCapturePrevious: () => void;
   onCaptureScrolling: () => void;
+  /** Hides the window, frames a region and keeps the text found inside it. */
+  onCaptureText: () => void;
   /** Hides the window and opens the onscreen ruler. */
   onOpenRuler: () => void;
   /** Opens the recording toolbar, where a recording is chosen and started. */
@@ -43,11 +46,11 @@ interface CaptureBarProps {
 /**
  * Capture tools for the history sidebar.
  *
- * The four capture kinds share one split button, exactly as they do in the title
- * bar: the wide half repeats the kind last used and the chevron opens all four
+ * The five capture kinds share one split button, exactly as they do in the title
+ * bar: the wide half repeats the kind last used and the chevron opens all five
  * with the current one ticked. The strip is 186px wide and has to hold the
- * eyedropper, the ruler, the split button and record, so four separate icons for
- * the capture kinds would cost more room than the job is worth.
+ * eyedropper, the ruler, the split button and record, so separate icons for the
+ * capture kinds would cost more room than the job is worth.
  */
 export function CaptureBar({
   orientation = "row",
@@ -59,6 +62,7 @@ export function CaptureBar({
   onCaptureScreen,
   onCapturePrevious,
   onCaptureScrolling,
+  onCaptureText,
   onOpenRuler,
   onRecord,
 }: CaptureBarProps) {
@@ -88,6 +92,12 @@ export function CaptureBar({
       label: "Scroll and capture a window",
       Icon: IconScrollCapture,
       run: onCaptureScrolling,
+    },
+    {
+      id: "text",
+      label: "Capture text from a region",
+      Icon: IconTextCapture,
+      run: onCaptureText,
     },
   ] satisfies { id: CaptureMode; label: string; Icon: typeof IconRegionCapture; run: () => void }[];
 

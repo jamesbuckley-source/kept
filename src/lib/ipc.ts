@@ -123,7 +123,6 @@ export function rulerPatch(patch: Record<string, unknown>): Promise<void> {
 export function rulerCopy(text: string): Promise<void> {
   return invoke("ruler_copy", { text });
 }
-
 /** Makes the overlay click-through (locked) or interactive again. */
 export function rulerLock(locked: boolean): Promise<void> {
   return invoke("ruler_lock", { locked });
@@ -157,6 +156,11 @@ export function captureWholeScreen(): Promise<void> {
 /** Picks a window, scrolls it to the end and captures the whole length. */
 export function captureScrollingWindow(): Promise<void> {
   return invoke("capture_scrolling_window");
+}
+
+/** Hides the window, frames a region and keeps the text found inside it. */
+export function captureTextRegion(): Promise<void> {
+  return invoke("capture_text_region");
 }
 
 /** The macOS privacy grants the capture and paste features need. */

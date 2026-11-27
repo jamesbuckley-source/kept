@@ -583,6 +583,17 @@ export function IconPreviousArea({ className }: IconProps) {
   );
 }
 
+/** A frame around a capital T: keep the words from the area, not the pixels. */
+export function IconTextCapture({ className }: IconProps) {
+  return frame(
+    className,
+    <>
+      <rect x="2.3" y="2.9" width="11.4" height="10.2" rx="1.2" />
+      <path d="M5.5 6.2h5M8 6.2v4.4" />
+    </>,
+  );
+}
+
 export function IconFace({ className }: IconProps) {
   return frame(
     className,

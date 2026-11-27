@@ -76,6 +76,8 @@ interface SidebarProps {
   /** Hides the window and repeats the area the last capture covered. */
   onCapturePrevious: () => void;
   onCaptureScrolling: () => void;
+  /** Hides the window, frames a region and keeps the text found inside it. */
+  onCaptureText: () => void;
   /** Opens the onscreen ruler. */
   onOpenRuler: () => void;
   /** Opens the screen-recording toolbar. */
@@ -406,6 +408,7 @@ export function Sidebar({
   onCaptureScreen,
   onCapturePrevious,
   onCaptureScrolling,
+  onCaptureText,
   onOpenRuler,
   onRecord,
   stackCount,
@@ -662,6 +665,7 @@ export function Sidebar({
             onCaptureScreen={onCaptureScreen}
             onCapturePrevious={onCapturePrevious}
             onCaptureScrolling={onCaptureScrolling}
+            onCaptureText={onCaptureText}
             onOpenRuler={onOpenRuler}
             onRecord={onRecord}
           />
@@ -698,6 +702,7 @@ export function Sidebar({
         onCaptureScreen={onCaptureScreen}
         onCapturePrevious={onCapturePrevious}
         onCaptureScrolling={onCaptureScrolling}
+        onCaptureText={onCaptureText}
         onOpenRuler={onOpenRuler}
         onRecord={onRecord}
       />

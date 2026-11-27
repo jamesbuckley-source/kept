@@ -21,10 +21,11 @@ pub enum CaptureAction {
     Color,
     Ruler,
     PreviousArea,
+    Text,
 }
 
 impl CaptureAction {
-    pub const ALL: [CaptureAction; 7] = [
+    pub const ALL: [CaptureAction; 8] = [
         CaptureAction::Region,
         CaptureAction::Window,
         CaptureAction::Screen,
@@ -32,11 +33,12 @@ impl CaptureAction {
         CaptureAction::Color,
         CaptureAction::Ruler,
         CaptureAction::PreviousArea,
+        CaptureAction::Text,
     ];
 
     /// Index into [`Bindings::captures`].
     ///
-    /// The new area action sits after the recording and stack slots so that the
+    /// The newest actions sit after the recording and stack slots so that the
     /// existing indices keep their meaning.
     fn slot(self) -> usize {
         match self {
@@ -47,6 +49,7 @@ impl CaptureAction {
             CaptureAction::Color => 4,
             CaptureAction::Ruler => 5,
             CaptureAction::PreviousArea => 10,
+            CaptureAction::Text => 11,
         }
     }
 
@@ -60,6 +63,7 @@ impl CaptureAction {
             CaptureAction::Color => "the color picker",
             CaptureAction::Ruler => "the onscreen ruler",
             CaptureAction::PreviousArea => "the previous area screenshot",
+            CaptureAction::Text => "the capture-text screenshot",
         }
     }
 
@@ -73,6 +77,7 @@ impl CaptureAction {
             CaptureAction::Color => &settings.pick_color_hotkey,
             CaptureAction::Ruler => &settings.ruler_hotkey,
             CaptureAction::PreviousArea => &settings.capture_previous_hotkey,
+            CaptureAction::Text => &settings.capture_text_hotkey,
         }
     }
 }
@@ -164,7 +169,7 @@ pub struct Bindings {
     pub new_clip: String,
     /// One per [`CaptureAction`] and [`RecordAction`], indexed by their slots.
     /// Empty means the action has no shortcut at all.
-    captures: [String; 11],
+    captures: [String; 12],
     /// Print Screen, when the user has asked the app to take the key over. It is
     /// spelled as a binding like any other so it is registered and released with
     /// the rest; what it *does* is decided from the default capture type.
@@ -173,7 +178,7 @@ pub struct Bindings {
 
 impl Bindings {
     pub fn from_settings(settings: &Settings) -> Self {
-        let mut captures: [String; 11] = Default::default();
+        let mut captures: [String; 12] = Default::default();
         for action in CaptureAction::ALL {
             captures[action.slot()] = action.configured(settings).trim().to_string();
         }
@@ -392,6 +397,7 @@ pub fn default_capture(settings: &Settings) -> CaptureAction {
         "window" => CaptureAction::Window,
         "screen" => CaptureAction::Screen,
         "scrolling" => CaptureAction::Scrolling,
+        "text" => CaptureAction::Text,
         _ => CaptureAction::Region,
     }
 }
@@ -456,6 +462,7 @@ mod tests {
             new_clip: String::new(),
             captures: [
                 region.into(),
+                String::new(),
                 String::new(),
                 String::new(),
                 String::new(),
@@ -752,6 +759,7 @@ mod tests {
             ("window", CaptureAction::Window),
             ("screen", CaptureAction::Screen),
             ("scrolling", CaptureAction::Scrolling),
+            ("text", CaptureAction::Text),
             // The picker is not a capture type, so a nonsense value is region.
             ("nonsense", CaptureAction::Region),
         ] {

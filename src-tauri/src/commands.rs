@@ -25,6 +25,7 @@ use crate::models::{
     ClipContent, ClipDetail, ClipFilter, ClipKind, ClipPage, Collection, NewClip, QuickItem,
     RichText, SplitOutcome, StackEntry, Stats, Tag,
 };
+use crate::ocr;
 use crate::paste;
 use crate::picker;
 use crate::preview;
@@ -257,6 +258,74 @@ pub fn capture_scrolling_window(app: AppHandle, state: State<'_, AppState>) -> R
     start_capture(app, state, capture::capture_scrolling)
 }
 
+/// Hides the window, lets the user frame a rectangle and stores the text found
+/// inside it rather than the picture.
+///
+/// The region selector is the one every capture already uses, so the rectangle
+/// behaves identically on all three platforms; only the recognition engine
+/// differs, and that difference lives in [`ocr`].
+#[tauri::command]
+pub fn capture_text_region(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let delay = state.store.settings().capture_delay_secs;
+    let handle = app;
+    std::thread::spawn(move || {
+        let result = match capture::capture_region(&handle, delay) {
+            Ok(Some(content)) => text_capture_payload(&handle, content),
+            // Cancelling is a choice, so the UI stays quiet.
+            Ok(None) => serde_json::json!({ "id": null }),
+            Err(e) => serde_json::json!({ "id": null, "error": e.to_string() }),
+        };
+        let _ = handle.emit(EVENT_SCREENSHOT_CAPTURED, result);
+    });
+    Ok(())
+}
+
+/// Reads the letters out of a captured image and stores them as a text clip,
+/// reporting the outcome the history window shows.
+fn text_capture_payload(handle: &AppHandle, content: ClipContent) -> serde_json::Value {
+    // Every region selector returns an image on every platform, so this is a
+    // shape the capture module does not produce.
+    let ClipContent::Image {
+        width,
+        height,
+        rgba,
+    } = content
+    else {
+        return serde_json::json!({
+            "id": null,
+            "error": "the capture did not produce an image to read",
+        });
+    };
+    let recognised = match ocr::extract_text(&rgba, width, height) {
+        Ok(text) => text,
+        Err(e) => {
+            log::warn!("could not read the text in the capture: {e}");
+            return serde_json::json!({ "id": null, "error": e.to_string() });
+        }
+    };
+    let Some(text) = text_clip_body(&recognised) else {
+        return serde_json::json!({ "id": null, "error": "No text was found in that area." });
+    };
+    match record_text_clip(handle, &text, "Capture Text") {
+        Ok(id) => serde_json::json!({ "id": id, "kind": "text" }),
+        Err(e) => {
+            log::warn!("could not store the captured text: {e}");
+            serde_json::json!({ "id": null, "error": e.to_string() })
+        }
+    }
+}
+
+/// What a text capture stores: the recognised text with the ragged edges the
+/// engine reports trimmed off.
+///
+/// `None` for a picture with no words in it, so an empty clip never lands in
+/// history — recognition easily returns a newline or a stray space for a blank
+/// area.
+fn text_clip_body(recognised: &str) -> Option<String> {
+    let trimmed = recognised.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 /// The privacy grants the capture and paste features need on macOS.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -365,6 +434,7 @@ pub fn run_capture_shortcut(app: &AppHandle, action: crate::hotkey::CaptureActio
         crate::hotkey::CaptureAction::PreviousArea => {
             capture_previous_area(app.clone(), state)
         }
+        crate::hotkey::CaptureAction::Text => capture_text_region(app.clone(), state),
     };
     if let Err(e) = started {
         log::warn!("could not start {} from its shortcut: {e}", action.label());
@@ -2549,6 +2619,7 @@ fn shortcut_patch(settings: &Settings) -> serde_json::Value {
         "captureWindowHotkey": settings.capture_window_hotkey,
         "captureScreenHotkey": settings.capture_screen_hotkey,
         "captureScrollingHotkey": settings.capture_scrolling_hotkey,
+        "captureTextHotkey": settings.capture_text_hotkey,
         "pickColorHotkey": settings.pick_color_hotkey,
         "rulerHotkey": settings.ruler_hotkey,
         "newClipHotkey": settings.new_clip_hotkey,
@@ -3734,11 +3805,50 @@ pub fn get_rich_text(state: State<'_, AppState>, id: i64) -> Result<RichText> {
 mod tests {
     use super::{
         ExportWatch, SaveWatch, is_email_address, listing, newest_export, save_shortcuts,
-        typed_text_clip,
+        text_clip_body, typed_text_clip,
     };
 
     use crate::error::AppError;
     use crate::store::{InsertOutcome, test_store};
+
+    #[test]
+    fn a_text_capture_keeps_the_words_and_drops_the_edges() {
+        // Recognition pads a screenshot with the blank line above and below the
+        // paragraph and a trailing space on the last line; the clip should hold
+        // neither, or the paste is not what was on screen.
+        assert_eq!(
+            text_clip_body("\n  CopyPaste OCR 2026  \n").as_deref(),
+            Some("CopyPaste OCR 2026")
+        );
+        // A blank area comes back as whitespace rather than as nothing at all.
+        assert_eq!(text_clip_body("  \n\t\n"), None);
+        assert_eq!(text_clip_body(""), None);
+    }
+
+    /// The two halves the command joins: the engine over a real screenshot, and
+    /// the rule that turns its answer into a clip body. Runs wherever the OCR
+    /// tests run, so all three platforms prove it.
+    #[test]
+    fn a_screenshot_of_words_becomes_the_text_clip_body() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("ocr-sample.png");
+        let source = image::open(&fixture)
+            .expect("the OCR fixture must decode")
+            .to_rgba8();
+        let (width, height) = source.dimensions();
+        let text = match crate::ocr::extract_text(&source.into_raw(), width, height) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("skipping: no OCR engine is installed ({e})");
+                return;
+            }
+        };
+        let body = text_clip_body(&text).expect("the fixture has words in it");
+        assert!(body.to_lowercase().contains("copypaste"), "got {body:?}");
+        assert_eq!(body, body.trim(), "the clip holds no edge whitespace");
+    }
 
     #[test]
     fn a_placed_frame_becomes_the_screen_rectangle_around_it() {

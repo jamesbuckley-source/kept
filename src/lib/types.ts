@@ -257,7 +257,7 @@ export type ThemeMode = "dark" | "light" | "custom";
 export type SortOrder = "updated-desc" | "updated-asc" | "created-desc" | "created-asc";
 
 /** Screenshot modes offered by the header's capture menu. */
-export type CaptureMode = "region" | "window" | "screen" | "scrolling";
+export type CaptureMode = "region" | "window" | "screen" | "scrolling" | "text";
 
 /** The presets a video clip can be turned into a GIF at. */
 export type GifQuality = "low" | "medium" | "high" | "original";
@@ -326,6 +326,8 @@ export interface Settings {
   captureScreenHotkey: string;
   /** Shortcut that captures a scrolling window. */
   captureScrollingHotkey: string;
+  /** Shortcut that captures a region and keeps the text found in it. */
+  captureTextHotkey: string;
   /** Shortcut that samples a screen colour. */
   pickColorHotkey: string;
   /** Shortcut that opens the onscreen ruler; empty means none. */

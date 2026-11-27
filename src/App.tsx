@@ -56,6 +56,7 @@ import {
   captureScreenWindow,
   captureScrollingWindow,
   capturePreviousArea,
+  captureTextRegion,
   captureWholeScreen,
   captureState,
   cancelGifExport,
@@ -191,6 +192,8 @@ interface ScreenshotPayload {
   id: number | null;
   /** False when the capture could not be put on the clipboard. */
   copied?: boolean;
+  /** Set by a text capture, whose notice names words rather than a picture. */
+  kind?: "image" | "text";
   error?: string | null;
 }
 
@@ -857,7 +860,7 @@ function MainApp() {
     // what keeps a capture from repainting the settings window as the app.
     if (windowLabel !== "main") return;
     const pending = listen<ScreenshotPayload>(SCREENSHOT_CAPTURED, (event) => {
-      const { id, copied, error } = event.payload;
+      const { id, copied, kind, error } = event.payload;
       if (error) {
         setError(error);
         return;
@@ -869,9 +872,13 @@ function MainApp() {
       setQuery("");
       setSelectedId(id);
       setNotice(
-        copied === false
-          ? "Captured a screenshot and added it to history."
-          : "Captured a screenshot and put it on the clipboard.",
+        kind === "text"
+          ? copied === false
+            ? "Captured the text and added it to history."
+            : "Captured the text and put it on the clipboard."
+          : copied === false
+            ? "Captured a screenshot and added it to history."
+            : "Captured a screenshot and put it on the clipboard.",
       );
     });
     return () => {
@@ -1780,6 +1787,11 @@ function MainApp() {
   /** Picks a window, scrolls it to the end and captures the whole length. */
   const captureScrolling = useCallback(() => {
     captureScrollingWindow().catch((e) => setError(errorMessage(e)));
+  }, []);
+
+  /** Hides the window, frames a region and keeps the text found inside it. */
+  const captureText = useCallback(() => {
+    captureTextRegion().catch((e) => setError(errorMessage(e)));
   }, []);
 
   /** Opens the recording toolbar, which is where a recording is chosen and started. */
@@ -3407,6 +3419,7 @@ function MainApp() {
           onCaptureScreen={captureScreen}
           onCapturePrevious={capturePrevious}
           onCaptureScrolling={captureScrolling}
+          onCaptureText={captureText}
           onOpenRuler={startRuler}
           onRecord={openRecordToolbar}
           stackCount={stack.count}
@@ -3713,6 +3726,7 @@ function MainApp() {
               onCaptureScreen={captureScreen}
               onCapturePrevious={capturePrevious}
               onCaptureScrolling={captureScrolling}
+              onCaptureText={captureText}
               onOpenRuler={startRuler}
               onRecord={openRecordToolbar}
               stackCount={stack.count}
