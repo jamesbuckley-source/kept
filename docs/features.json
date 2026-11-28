@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-28T00:50:37.191Z",
+  "updatedAt": "2026-11-28T00:53:29.238Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -4252,11 +4252,16 @@
       "id": "show-latest-updates",
       "title": "\"Show Latest updates\"",
       "area": "General",
-      "status": "in-progress",
-      "summary": "\"Show Latest updates\" content needs updating for 1.2 and it needs to show on the popup that alerts users that there is an update available.",
+      "status": "shipped",
+      "summary": "Two halves. The banner that announces an available update now says what is in it: the version, then the headlines of that release pulled from the updater's own notes (headings first, bullets when GitHub's auto-generated body has none), with '+N more' when the list is longer, and the existing What's new link beside it for the full page. The panel behind Settings -> About -> Show latest updates no longer falls back to the page's sample content: it shows the pending release's notes when one is waiting and otherwise the notes bundled into the build from docs/release-notes.md, which is the same file a release publishes as its GitHub body. So Show latest updates reads the current 1.2 notes offline, and the same summarising runs when an update is offered.",
       "owner": "",
-      "references": [],
-      "updatedAt": "2026-11-28T00:50:37.191Z"
+      "references": [
+        "src/lib/releaseNotes.ts",
+        "src/App.tsx",
+        "src/components/SettingsPanel.tsx",
+        "docs/release-notes.md"
+      ],
+      "updatedAt": "2026-11-28T00:53:29.238Z"
     },
     {
       "id": "add-clip-note-as-an-item-under-utilities",
