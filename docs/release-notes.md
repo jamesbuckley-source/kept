@@ -21,6 +21,27 @@ The two-way light/dark switch is now a theme system, all of it in
   bundled one keeps its own id instead of shadowing it, and imported ones carry a
   small remove button.
 
+## QR codes
+
+A picture in the history that contains a QR code is read for you: select it and the
+preview pane adds a **QR code** row with what the code holds, plus an **Open link**
+button when what it holds is an address. Nothing about it is stored, so a picture
+captured before this release reads the same way as one captured after it, and a code
+printed without a scheme (`example.com/order/42`) is opened as `https`.
+
+There is a new capture tool beside the others: **Capture QR code**, in the capture
+menu, the sidebar strip and the tray's Capture submenu, frames a region exactly as a
+screenshot does and keeps the code's payload as a text clip, which puts it on the
+clipboard. A code that holds a link opens in your browser as well, so scanning a
+poster or a screen is one drag rather than a drag, a paste and a click. An area with
+no code in it says so and adds nothing.
+
+- **The same decoder on every platform.** Reading codes is pure Rust, so Windows,
+  macOS and Linux decode the same way, with nothing extra to install.
+- **Fast on ordinary screenshots.** Large pictures are scaled down before they are
+  searched, and the search only runs when a picture is on screen, never in the
+  background.
+
 ## Stacks live in their own window
 
 The paste queue - formerly "Paste stack" - is now one thing instead of three. The
