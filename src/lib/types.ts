@@ -251,13 +251,13 @@ export interface ThemeColors {
   danger: string;
 }
 
-export type ThemeMode = "dark" | "light" | "custom";
+export type ThemeMode = "dark" | "light" | "custom" | "theme";
 
 /** History ordering, mirrored by the backend's `sortOrder` setting. */
 export type SortOrder = "updated-desc" | "updated-asc" | "created-desc" | "created-asc";
 
 /** Screenshot modes offered by the header's capture menu. */
-export type CaptureMode = "region" | "window" | "screen" | "scrolling" | "text";
+export type CaptureMode = "region" | "window" | "screen" | "scrolling" | "text" | "qr";
 
 /** The presets a video clip can be turned into a GIF at. */
 export type GifQuality = "low" | "medium" | "high" | "original";
@@ -296,7 +296,21 @@ export const DEFAULT_VIEW_MODES: ViewModes = {
 
 export interface Theme {
   mode: ThemeMode;
+  /** The bundled or imported preset in use, when `mode` is "theme". */
+  id: string;
   colors: ThemeColors;
+}
+
+/** A named palette: bundled with Kept, or imported from a theme file. */
+export interface ThemePreset {
+  id: string;
+  name: string;
+  colors: ThemeColors;
+  /** Colour of the capture overlays; the global setting when absent. */
+  captureOutline?: string;
+  author?: string;
+  /** Bundled presets can be applied but not removed. */
+  builtin: boolean;
 }
 
 /**

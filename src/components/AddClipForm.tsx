@@ -11,7 +11,7 @@ const AUTO_SAVE_DELAY_MS = 500;
 type SaveStatus = "idle" | "saving" | "saved" | "seeded";
 
 /**
- * The body of the standalone "New clip" window.
+ * The body of the standalone "Add Clip Note" window.
  *
  * It saves as it goes: the first pause after typing becomes a clip, and later
  * pauses rewrite that same clip, so closing the window is never a way to lose a
@@ -151,9 +151,10 @@ export function AddClipForm() {
   return (
     <div className="flex h-full flex-col bg-panel">
       <header className="shrink-0 border-b border-edge px-3 py-2">
-        <h1 className="text-[13px] font-semibold text-ink">New clip</h1>
+        <h1 className="text-[13px] font-semibold text-ink">Add Clip Note</h1>
         <p className="mt-0.5 text-[11px] text-ink-faint">
-          Markdown formatting is saved as Markdown; everything else stays plain text.
+          Markdown formatting is saved as Markdown; everything else stays plain text. Notes are
+          kept forever in Utilities ▸ Clip notes.
         </p>
       </header>
 
@@ -184,7 +185,7 @@ export function AddClipForm() {
           }
         }}
         spellCheck={false}
-        placeholder="Type or paste the text for the new clip…"
+        placeholder="Write or paste the note…"
         aria-label="Clip text"
         className="min-h-0 flex-1 resize-none border-0 bg-transparent px-3 py-2 text-[12px] leading-relaxed text-ink placeholder:text-ink-faint focus:outline-none"
       />
@@ -203,7 +204,7 @@ export function AddClipForm() {
         <button
           type="button"
           onClick={() => void startNew()}
-          title="Keep this draft and start another clip"
+          title="Keep this note and start another"
           className="rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink"
         >
           New

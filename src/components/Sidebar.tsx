@@ -18,6 +18,7 @@ import {
   IconGrip,
   IconImage,
   IconMedia,
+  IconNote,
   IconRecord,
   IconPalette,
   IconPin,
@@ -37,6 +38,8 @@ interface SidebarProps {
   onSelect: (view: SidebarView) => void;
   stats: Stats | null;
   collections: Collection[];
+  /** The permanent archive holding Add Clip Note notes, once it exists. */
+  notesArchive: Collection | null;
   tags: Tag[];
   savedSearches: SavedSearch[];
   onCreateCollection: (name: string) => void;
@@ -78,6 +81,8 @@ interface SidebarProps {
   onCaptureScrolling: () => void;
   /** Hides the window, frames a region and keeps the text found inside it. */
   onCaptureText: () => void;
+  /** Hides the window, frames a region and reads the QR code inside it. */
+  onCaptureQr: () => void;
   /** Opens the onscreen ruler. */
   onOpenRuler: () => void;
   /** Opens the screen-recording toolbar. */
@@ -380,6 +385,7 @@ export function Sidebar({
   onSelect,
   stats,
   collections,
+  notesArchive,
   tags,
   savedSearches,
   onCreateCollection,
@@ -409,6 +415,7 @@ export function Sidebar({
   onCapturePrevious,
   onCaptureScrolling,
   onCaptureText,
+  onCaptureQr,
   onOpenRuler,
   onRecord,
   stackCount,
@@ -666,6 +673,7 @@ export function Sidebar({
             onCapturePrevious={onCapturePrevious}
             onCaptureScrolling={onCaptureScrolling}
             onCaptureText={onCaptureText}
+            onCaptureQr={onCaptureQr}
             onOpenRuler={onOpenRuler}
             onRecord={onRecord}
           />
@@ -703,6 +711,7 @@ export function Sidebar({
         onCapturePrevious={onCapturePrevious}
         onCaptureScrolling={onCaptureScrolling}
         onCaptureText={onCaptureText}
+        onCaptureQr={onCaptureQr}
         onOpenRuler={onOpenRuler}
         onRecord={onRecord}
       />
@@ -1159,6 +1168,18 @@ export function Sidebar({
           active={view.kind === "gifs"}
           onClick={() => onSelect({ kind: "gifs" })}
         />
+        {notesArchive && (
+          <NavItem
+            icon={<IconNote className="size-3.5" />}
+            label="Clip notes"
+            title="Notes written with Add Clip Note. They are kept forever: retention and bulk deletes leave them alone."
+            count={notesArchive.clipCount}
+            active={view.kind === "collection" && view.id === notesArchive.id}
+            onClick={() =>
+              onSelect({ kind: "collection", id: notesArchive.id, name: notesArchive.name })
+            }
+          />
+        )}
       </Section>
       </nav>
 

@@ -9,6 +9,7 @@ import {
   IconEyedropper,
   IconFullScreenCapture,
   IconPreviousArea,
+  IconQrCapture,
   IconRecord,
   IconRegionCapture,
   IconRuler,
@@ -37,6 +38,8 @@ interface CaptureBarProps {
   onCaptureScrolling: () => void;
   /** Hides the window, frames a region and keeps the text found inside it. */
   onCaptureText: () => void;
+  /** Hides the window, frames a region and reads the QR code inside it. */
+  onCaptureQr: () => void;
   /** Hides the window and opens the onscreen ruler. */
   onOpenRuler: () => void;
   /** Opens the recording toolbar, where a recording is chosen and started. */
@@ -63,6 +66,7 @@ export function CaptureBar({
   onCapturePrevious,
   onCaptureScrolling,
   onCaptureText,
+  onCaptureQr,
   onOpenRuler,
   onRecord,
 }: CaptureBarProps) {
@@ -98,6 +102,12 @@ export function CaptureBar({
       label: "Capture text from a region",
       Icon: IconTextCapture,
       run: onCaptureText,
+    },
+    {
+      id: "qr",
+      label: "Capture a QR code from a region",
+      Icon: IconQrCapture,
+      run: onCaptureQr,
     },
   ] satisfies { id: CaptureMode; label: string; Icon: typeof IconRegionCapture; run: () => void }[];
 

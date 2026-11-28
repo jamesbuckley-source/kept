@@ -328,6 +328,139 @@ fn text_clip_body(recognised: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// Hides the window, lets the user frame a rectangle and reads the QR code in
+/// it.
+///
+/// The code's payload becomes a text clip, which also puts it on the clipboard;
+/// when it holds a link the payload is reported back so the window can open it.
+#[tauri::command]
+pub fn capture_qr_region(app: AppHandle, state: State<'_, AppState>) -> Result<()> {
+    let delay = state.store.settings().capture_delay_secs;
+    let handle = app;
+    std::thread::spawn(move || {
+        let result = match capture::capture_region(&handle, delay) {
+            Ok(Some(content)) => qr_capture_payload(&handle, content),
+            // Cancelling is a choice, so the UI stays quiet.
+            Ok(None) => serde_json::json!({ "id": null }),
+            Err(e) => serde_json::json!({ "id": null, "error": e.to_string() }),
+        };
+        let _ = handle.emit(EVENT_SCREENSHOT_CAPTURED, result);
+    });
+    Ok(())
+}
+
+/// Reads the code out of a captured region and stores its payload as a text clip.
+fn qr_capture_payload(handle: &AppHandle, content: ClipContent) -> serde_json::Value {
+    // Every region selector returns an image on every platform, so this is a
+    // shape the capture module does not produce.
+    let ClipContent::Image {
+        width,
+        height,
+        rgba,
+    } = content
+    else {
+        return serde_json::json!({
+            "id": null,
+            "error": "the capture did not produce an image to read",
+        });
+    };
+    let Some(text) = crate::qr::decode_rgba(&rgba, width as usize, height as usize)
+        .into_iter()
+        .next()
+    else {
+        return serde_json::json!({ "id": null, "error": "No QR code was found in that area." });
+    };
+    let url = crate::qr::web_target(&text);
+    match record_text_clip(handle, &text, "Capture QR Code") {
+        Ok(id) => serde_json::json!({ "id": id, "kind": "text", "qr": true, "qrUrl": url }),
+        Err(e) => {
+            log::warn!("could not store the scanned code: {e}");
+            serde_json::json!({ "id": null, "error": e.to_string() })
+        }
+    }
+}
+
+/// A QR code read out of a picture.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannedCode {
+    /// Exactly what the code holds.
+    pub text: String,
+    /// The address a browser can load, when the payload is one.
+    pub url: Option<String>,
+}
+
+/// The QR codes in a stored picture, for the preview pane.
+///
+/// Nothing is cached: the pane shows one clip at a time, and falling back to
+/// reading the picture keeps the schema — and therefore every stored clip — as it
+/// was.
+#[tauri::command]
+pub fn clip_qr(state: State<'_, AppState>, id: i64) -> Result<Vec<ScannedCode>> {
+    let Some(name) = state.store.image_file(id)? else {
+        return Ok(Vec::new());
+    };
+    let Some(bytes) = state.store.media_bytes(&name)? else {
+        return Ok(Vec::new());
+    };
+    Ok(crate::qr::decode_encoded(&bytes)
+        .into_iter()
+        .map(|text| ScannedCode {
+            url: crate::qr::web_target(&text),
+            text,
+        })
+        .collect())
+}
+
+/// The KeptCraft build the installer offer would download, so the UI can name
+/// the version and its size before anything is fetched.
+#[tauri::command]
+pub async fn keptcraft_release() -> Result<crate::keptcraft::Release> {
+    crate::keptcraft::latest().await
+}
+
+/// Downloads the newest KeptCraft, checks it against its published digest and
+/// starts the installer.
+#[tauri::command]
+pub async fn install_keptcraft() -> Result<String> {
+    crate::keptcraft::install().await
+}
+
+/// Where imported themes live.
+///
+/// Under the app data folder rather than the data folder, which is the one the
+/// user can move: a theme is part of the app's appearance, not of the clips, and
+/// moving the clips must not take the colours with it.
+fn themes_dir(app: &AppHandle) -> Result<std::path::PathBuf> {
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::msg(format!("could not resolve the themes folder: {e}")))?;
+    Ok(base.join("themes"))
+}
+
+/// Every palette the Appearance page offers: bundled first, then imported.
+#[tauri::command]
+pub fn themes_list(app: AppHandle) -> Result<Vec<crate::themes::ThemePreset>> {
+    Ok(crate::themes::list(&themes_dir(&app)?))
+}
+
+/// Imports a theme from a `.zip` holding a `theme.json`, or from a bare `.json`.
+#[tauri::command]
+pub fn theme_import(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::themes::ThemeImport> {
+    let (theme, replaced) = crate::themes::import(&themes_dir(&app)?, std::path::Path::new(&path))?;
+    Ok(crate::themes::ThemeImport { theme, replaced })
+}
+
+/// Deletes an imported theme; bundled presets are refused.
+#[tauri::command]
+pub fn theme_remove(app: AppHandle, id: String) -> Result<()> {
+    crate::themes::remove(&themes_dir(&app)?, &id)
+}
+
 /// The privacy grants the capture and paste features need on macOS.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -686,6 +819,11 @@ pub fn set_clip_note(
 /// `created` tells auto-save whether the text became a new row or matched one
 /// that was already in the history. A match must not be edited afterwards, so
 /// the add-clip window stops auto-saving into it.
+/// Creates a clip from typed text, filing it in the permanent notes archive so
+/// retention and bulk deletes leave it alone.
+///
+/// A clip whose text already exists is not moved into the notes archive: that row
+/// belongs wherever it was captured.
 #[tauri::command]
 pub fn create_text_clip(
     app: AppHandle,
@@ -698,9 +836,18 @@ pub fn create_text_clip(
         crate::store::InsertOutcome::Duplicate(id) => (id, false),
     };
     if created {
+        if let Err(e) = state.store.add_clip_note(id) {
+            log::warn!("could not file the new note in the notes archive: {e}");
+        }
         notify_history_changed(&app);
     }
     Ok(TypedClipOutcome { id, created })
+}
+
+/// The permanent archive the Add Clip Note button writes into.
+#[tauri::command]
+pub fn clip_notes(state: State<'_, AppState>) -> Result<crate::models::Collection> {
+    state.store.clip_notes()
 }
 
 /// Builds the `NewClip` for typed text, applying the capture path's preview and

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 
-import { errorMessage, detectKeptCraft, validateHotkey } from "../lib/ipc";
+import { errorMessage, detectKeptCraft, installKeptCraft, validateHotkey } from "../lib/ipc";
 import { isMac } from "../lib/platform";
 import type { Settings, ThemeMode } from "../lib/types";
 import { CaptureModeField } from "./CaptureModeField";
@@ -208,6 +208,25 @@ export function FirstRunWizard({
    */
   const [keptCraft, setKeptCraft] = useState<string | null>(null);
   const [useKeptCraft, setUseKeptCraft] = useState(false);
+  // The installer offer reports back here: what happened, or why nothing did.
+  const [craftBusy, setCraftBusy] = useState(false);
+  const [craftNote, setCraftNote] = useState<string | null>(null);
+
+  /** Downloads KeptCraft and starts its installer; the version is shown after. */
+  const installCraft = async () => {
+    setCraftBusy(true);
+    setCraftNote(null);
+    try {
+      setCraftNote(await installKeptCraft());
+      // Once the installer has finished, Detect in Settings picks it up; the
+      // wizard says so rather than pretending it is ready.
+      setKeptCraft(await detectKeptCraft());
+    } catch (e) {
+      setCraftNote(errorMessage(e));
+    } finally {
+      setCraftBusy(false);
+    }
+  };
   useEffect(() => {
     let cancelled = false;
     detectKeptCraft()
@@ -703,6 +722,26 @@ export function FirstRunWizard({
                       checked={useKeptCraft}
                       onChange={setUseKeptCraft}
                     />
+                  }
+                />
+              )}
+              {!keptCraft && (
+                <Row
+                  label="Install KeptCraft"
+                  hint={
+                    craftNote ??
+                    "Kept's image editor. Kept downloads the newest release from GitHub over HTTPS, checks it against the SHA-256 the release publishes, then starts its installer."
+                  }
+                  control={
+                    <button
+                      type="button"
+                      onClick={() => void installCraft()}
+                      disabled={craftBusy}
+                      title="Download the newest KeptCraft and start its installer"
+                      className="shrink-0 rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
+                    >
+                      {craftBusy ? "Downloading…" : "Install KeptCraft…"}
+                    </button>
                   }
                 />
               )}

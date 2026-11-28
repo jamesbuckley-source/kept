@@ -57,6 +57,7 @@ import {
   captureScrollingWindow,
   capturePreviousArea,
   captureTextRegion,
+  captureQrRegion,
   captureWholeScreen,
   captureState,
   cancelGifExport,
@@ -86,6 +87,7 @@ import {
   getStats,
   hideWindow,
   importDroppedFiles,
+  clipNotes,
   listClips,
   listCollections,
   listTags,
@@ -197,6 +199,10 @@ interface ScreenshotPayload {
   copied?: boolean;
   /** Set by a text capture, whose notice names words rather than a picture. */
   kind?: "image" | "text";
+  /** Set by a QR capture, whose notice names the code rather than the words. */
+  qr?: boolean;
+  /** The link a scanned code holds, for the browser to open. */
+  qrUrl?: string | null;
   error?: string | null;
 }
 
@@ -380,6 +386,8 @@ function MainApp() {
   /** The clip whose payload `detail` holds, so refreshes never blank the pane. */
   const detailClipId = useRef<number | null>(null);
   const [collections, setCollections] = useState<Collection[]>([]);
+  /** The permanent archive holding Add Clip Note notes, with its count. */
+  const [notesArchive, setNotesArchive] = useState<Collection | null>(null);
   const [tags, setTags] = useState<Tag[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -709,6 +717,7 @@ function MainApp() {
   useEffect(() => {
     const load = () => {
       listCollections().then(setCollections).catch(() => undefined);
+      clipNotes().then(setNotesArchive).catch(() => undefined);
       listTags().then(setTags).catch(() => undefined);
       getStats().then(setStats).catch(() => undefined);
     };
@@ -877,25 +886,30 @@ function MainApp() {
     // what keeps a capture from repainting the settings window as the app.
     if (windowLabel !== "main") return;
     const pending = listen<ScreenshotPayload>(SCREENSHOT_CAPTURED, (event) => {
-      const { id, copied, kind, error } = event.payload;
+      const { id, copied, kind, error, qr, qrUrl } = event.payload;
       if (error) {
         setError(error);
         return;
       }
       // No id means the user cancelled.
       if (typeof id !== "number") return;
+      if (qrUrl) openUrl(qrUrl).catch((e) => setError(errorMessage(e)));
       setRoute("history");
       setView({ kind: "all" });
       setQuery("");
       setSelectedId(id);
       setNotice(
-        kind === "text"
-          ? copied === false
-            ? "Captured the text and added it to history."
-            : "Captured the text and put it on the clipboard."
-          : copied === false
-            ? "Captured a screenshot and added it to history."
-            : "Captured a screenshot and put it on the clipboard.",
+        qr
+          ? qrUrl
+            ? "Read the QR code, copied it and opened the link in your browser."
+            : "Read the QR code and put it on the clipboard."
+          : kind === "text"
+            ? copied === false
+              ? "Captured the text and added it to history."
+              : "Captured the text and put it on the clipboard."
+            : copied === false
+              ? "Captured a screenshot and added it to history."
+              : "Captured a screenshot and put it on the clipboard.",
       );
     });
     return () => {
@@ -1809,6 +1823,11 @@ function MainApp() {
   /** Hides the window, frames a region and keeps the text found inside it. */
   const captureText = useCallback(() => {
     captureTextRegion().catch((e) => setError(errorMessage(e)));
+  }, []);
+
+  /** Hides the window, frames a region and reads the QR code inside it. */
+  const captureQr = useCallback(() => {
+    captureQrRegion().catch((e) => setError(errorMessage(e)));
   }, []);
 
   /** Opens the recording toolbar, which is where a recording is chosen and started. */
@@ -3186,6 +3205,17 @@ function MainApp() {
       // The settings window has no list of its own to act on.
       if (route !== "history") return;
 
+      // Ctrl+N is the keyboard way to the Add Clip Note window, from any view.
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "n"
+      ) {
+        event.preventDefault();
+        openAddClipWindow().catch((e) => setError(errorMessage(e)));
+        return;
+      }
+
       // Ctrl+C copies the clip under the cursor. The overlay is open when the user
       // reaches for the shortcut often enough that the native copy — which would
       // copy nothing and leave the previous entry on the clipboard — reads as
@@ -3432,7 +3462,13 @@ function MainApp() {
       {!standaloneSettings && (
         <TitleBar
           subtitle={
-            route === "settings" ? "Settings" : `${activeFilter}${query ? ` · “${query}”` : ""}`
+            route === "settings"
+              ? "Settings"
+              : `${activeFilter}${
+                  notesArchive && view.kind === "collection" && view.id === notesArchive.id
+                    ? " · kept forever"
+                    : ""
+                }${query ? ` · “${query}”` : ""}`
           }
           settingsOpen={route === "settings"}
           onToggleSettings={() =>
@@ -3448,6 +3484,7 @@ function MainApp() {
           onCapturePrevious={capturePrevious}
           onCaptureScrolling={captureScrolling}
           onCaptureText={captureText}
+          onCaptureQr={captureQr}
           onOpenRuler={startRuler}
           onRecord={openRecordToolbar}
           stackCount={stack.count}
@@ -3727,6 +3764,7 @@ function MainApp() {
                 setSelectedIds([]);
               }}
               stats={stats}
+              notesArchive={notesArchive}
               collections={collections}
               tags={tags}
               savedSearches={settings?.savedSearches ?? []}
@@ -3763,6 +3801,7 @@ function MainApp() {
               onCapturePrevious={capturePrevious}
               onCaptureScrolling={captureScrolling}
               onCaptureText={captureText}
+              onCaptureQr={captureQr}
               onOpenRuler={startRuler}
               onRecord={openRecordToolbar}
               stackCount={stack.count}

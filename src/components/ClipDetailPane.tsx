@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { formatBytes, formatCount, formatDuration, formatRelative, clipFullImageUrl, clipMotionUrl, clipLabel, leafName, shortenMiddle } from "../lib/format";
-import { clipLength, mediaUrl } from "../lib/ipc";
+import { clipLength, clipQr, mediaUrl, type ScannedCode } from "../lib/ipc";
 import { isMac } from "../lib/platform";
 import type { ClipDetail, ClipSummary, Collection } from "../lib/types";
 import { useSectionOrder, type SectionHandle } from "../lib/sectionOrder";
@@ -675,6 +675,25 @@ export function ClipDetailPane({
     Boolean(clip?.secretLevel) && !loadingDetail && (detail?.text ?? clip?.preview ?? "") === "";
   const secretBlurred = Boolean(clip?.secretLevel) && !secretShown && !secretLocked;
   useEffect(() => setSecretShown(false), [clip?.id]);
+
+  // Reading a picture for codes costs a decode, so it happens once per clip and
+  // only while that clip is the one on show. Sealed pictures keep their secret.
+  const [codes, setCodes] = useState<ScannedCode[]>([]);
+  useEffect(() => {
+    setCodes([]);
+    if (!clip || clip.kind !== "image" || clip.secretLevel) return;
+    let live = true;
+    void clipQr(clip.id)
+      .then((found) => {
+        if (live) setCodes(found);
+      })
+      .catch(() => {
+        // A picture that cannot be decoded simply has no codes to show.
+      });
+    return () => {
+      live = false;
+    };
+  }, [clip?.id, clip?.kind, clip?.secretLevel]);
   // The drag handlers are plain DOM listeners, so the latest width lives in a ref
   // rather than being read back out of state.
   const liveWidthRef = useRef<number | null>(null);
@@ -1098,6 +1117,41 @@ export function ClipDetailPane({
               >
                 {detail.ocrText}
               </pre>
+            </div>
+          )}
+
+          {!loadingDetail && clip.kind === "image" && codes.length > 0 && (
+            <div className="mt-2">
+              <h4 className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-ink-faint">
+                QR code
+              </h4>
+              <ul className="space-y-1">
+                {codes.map((code) => (
+                  <li
+                    key={code.text}
+                    className="flex items-center gap-1 rounded bg-panel-2 px-2 py-1"
+                  >
+                    <span
+                      data-selectable
+                      title={code.text}
+                      className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink-dim"
+                    >
+                      {code.text}
+                    </span>
+                    {code.url && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenUrl(code.url ?? "")}
+                        title="Open the link in the browser"
+                        className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-panel-3 hover:text-ink"
+                      >
+                        <IconExternal className="size-3" />
+                        Open link
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

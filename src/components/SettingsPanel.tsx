@@ -22,6 +22,12 @@ import {
   errorMessage,
   copyText,
   detectKeptCraft,
+  installKeptCraft,
+  keptcraftRelease,
+  themeImport,
+  themeRemove,
+  themesList,
+  type KeptCraftRelease,
   installFfmpeg,
   recordToolchain,
   revealErrorLog,
@@ -39,7 +45,7 @@ import {
   type StorageInfo,
   type VaultStatus,
   type Theme,
-  type ThemeMode,
+  type ThemePreset,
   type ViewMode,
 } from "../lib/types";
 import type { UpdateState } from "../hooks/useUpdater";
@@ -829,48 +835,170 @@ function ColorField({
   );
 }
 
+/** One preset as a chip: a three-stop swatch and its name. */
+function ThemeChip({
+  preset,
+  active,
+  onPick,
+  onRemove,
+}: {
+  preset: ThemePreset;
+  active: boolean;
+  onPick: () => void;
+  onRemove?: () => void;
+}) {
+  return (
+    <span
+      className={`flex items-center overflow-hidden rounded border transition-colors ${
+        active ? "border-accent-dim bg-accent/15" : "border-edge bg-panel-2 hover:bg-panel-3"
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onPick}
+        aria-pressed={active}
+        title={preset.author ? `${preset.name} by ${preset.author}` : preset.name}
+        className="flex items-center gap-1.5 py-0.5 pl-1 pr-1.5 text-[10px] text-ink-dim transition-colors hover:text-ink"
+      >
+        <span className="flex overflow-hidden rounded-[3px] border border-edge">
+          {[preset.colors.canvas, preset.colors.panel2, preset.colors.accent].map((hex, index) => (
+            <span key={index} className="size-2.5" style={{ backgroundColor: hex }} />
+          ))}
+        </span>
+        {preset.name}
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          title={`Remove ${preset.name}`}
+          aria-label={`Remove ${preset.name}`}
+          className="px-1 text-[10px] leading-none text-ink-faint transition-colors hover:text-danger"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
 /**
  * Theme controls as individual rows, so the settings search can filter them like
  * any other setting.
+ *
+ * Dark and light stay two buttons because they are modes, not palettes; every
+ * other palette is a preset that fills in all twelve colours at once and, when it
+ * carries one, the capture overlay colour. The colour pickers appear only once a
+ * colour is being changed by hand.
  */
-function themeRows(theme: Theme, onChange: (next: Theme) => void): ReactNode {
+function themeRows(
+  theme: Theme,
+  presets: ThemePreset[],
+  onChange: (next: Theme) => void,
+  onApplyPreset: (preset: ThemePreset) => void,
+  onImport: () => void,
+  onRemovePreset: (preset: ThemePreset) => void,
+  busy: boolean,
+): ReactNode {
   const colors = resolveColors(theme);
-  const modes: { id: ThemeMode; label: string }[] = [
-    { id: "dark", label: "Dark" },
-    { id: "light", label: "Light" },
-    { id: "custom", label: "Custom" },
-  ];
+  const activePreset = theme.mode === "theme" ? theme.id : "";
 
   const rows: ReactNode[] = [
     <Row
       key="theme-mode"
       label="Theme"
-      hint="Presets repaint the whole interface; Custom exposes every color."
+      hint="Presets repaint the whole interface and the colour capture overlays draw with. Custom exposes every colour."
       control={
-        <div className="flex items-center gap-0.5 rounded border border-edge bg-panel-2 p-0.5">
-          {modes.map((mode) => (
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {(
+            [
+              { id: "dark", label: "Dark" },
+              { id: "light", label: "Light" },
+            ] as const
+          ).map((mode) => (
             <button
               key={mode.id}
               type="button"
               aria-pressed={theme.mode === mode.id}
-              onClick={() =>
-                // Carry the palette the user is looking at into custom mode so the
-                // pickers start from the visible colors.
-                onChange({ mode: mode.id, colors: resolveColors(theme) })
-              }
-              className={`rounded px-2 py-0.5 text-[10px] transition-colors ${
+              onClick={() => onChange({ mode: mode.id, id: "", colors: resolveColors(theme) })}
+              className={`rounded border px-2 py-0.5 text-[10px] transition-colors ${
                 theme.mode === mode.id
-                  ? "bg-accent/25 text-accent-hi"
-                  : "text-ink-faint hover:text-ink-dim"
+                  ? "border-accent-dim bg-accent/20 text-ink"
+                  : "border-edge bg-panel-2 text-ink-faint hover:bg-panel-3 hover:text-ink-dim"
               }`}
             >
               {mode.label}
             </button>
           ))}
+          <button
+            type="button"
+            aria-pressed={theme.mode === "custom"}
+            onClick={() => onChange({ mode: "custom", id: "", colors: resolveColors(theme) })}
+            title="Pick every colour yourself"
+            className={`rounded border px-2 py-0.5 text-[10px] transition-colors ${
+              theme.mode === "custom"
+                ? "border-accent-dim bg-accent/20 text-ink"
+                : "border-edge bg-panel-2 text-ink-faint hover:bg-panel-3 hover:text-ink-dim"
+            }`}
+          >
+            Custom
+          </button>
         </div>
       }
     />,
   ];
+
+  const builtin = presets.filter((preset) => preset.builtin);
+  const imported = presets.filter((preset) => !preset.builtin);
+
+  rows.push(
+    <Row
+      key="theme-presets"
+      label="Presets"
+      hint="Each one sets every colour, so switching between them never leaves a stray tone behind."
+      control={
+        <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
+          {builtin.map((preset) => (
+            <ThemeChip
+              key={preset.id}
+              preset={preset}
+              active={activePreset === preset.id}
+              onPick={() => onApplyPreset(preset)}
+            />
+          ))}
+        </div>
+      }
+    />,
+  );
+
+  rows.push(
+    <Row
+      key="theme-import"
+      label="Imported themes"
+      hint="A theme is a .zip holding a theme.json, or a bare theme.json. Every colour must be present, so a shared theme looks the way its author meant it to."
+      control={
+        <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
+          {imported.map((preset) => (
+            <ThemeChip
+              key={preset.id}
+              preset={preset}
+              active={activePreset === preset.id}
+              onPick={() => onApplyPreset(preset)}
+              onRemove={() => onRemovePreset(preset)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onImport}
+            disabled={busy}
+            className="rounded border border-edge bg-panel-2 px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
+          >
+            {busy ? "Importing…" : "Import theme…"}
+          </button>
+        </div>
+      }
+    />,
+  );
 
   if (theme.mode === "custom") {
     rows.push(
@@ -884,7 +1012,11 @@ function themeRows(theme: Theme, onChange: (next: Theme) => void): ReactNode {
               label={field.label}
               value={colors[field.key]}
               onChange={(value) =>
-                onChange({ mode: "custom", colors: { ...colors, [field.key]: value } })
+                onChange({
+                  mode: "custom",
+                  id: "",
+                  colors: { ...colors, [field.key]: value },
+                })
               }
             />
           }
@@ -976,6 +1108,15 @@ export function SettingsPanel({
   const [markdownError, setMarkdownError] = useState<string | null>(null);
   const [imageEditorError, setImageEditorError] = useState<string | null>(null);
   const [detectingEditor, setDetectingEditor] = useState(false);
+  // The release the installer offer found, and what became of it. The download
+  // only starts once the version and file name have been shown.
+  const [craftOffer, setCraftOffer] = useState<KeptCraftRelease | null>(null);
+  const [craftBusy, setCraftBusy] = useState(false);
+  const [craftNote, setCraftNote] = useState<string | null>(null);
+  // Every palette the Appearance page offers, and whether an import is running.
+  const [presets, setPresets] = useState<ThemePreset[]>([]);
+  const [themeBusy, setThemeBusy] = useState(false);
+  const [themeError, setThemeError] = useState<string | null>(null);
   // Decided on blur, not on every keystroke: half-typed commands are not saved.
   const [editorDraft, setEditorDraft] = useState(settings?.imageEditor ?? "");
   // Empty on mount, so every section starts collapsed each time settings opens.
@@ -1058,6 +1199,68 @@ export function SettingsPanel({
 
   // Choosing a program patches the setting, so the field has to follow it.
   useEffect(() => setEditorDraft(settings?.imageEditor ?? ""), [settings?.imageEditor]);
+
+  // The palette list is read once when the page opens; imports and removals
+  // refresh it themselves.
+  const refreshPresets = useCallback(() => {
+    themesList()
+      .then(setPresets)
+      .catch(() => setPresets([]));
+  }, []);
+  useEffect(() => refreshPresets(), [refreshPresets]);
+
+  /**
+   * Applies a preset: its twelve colours, and the capture outline it carries.
+   *
+   * The outline goes into the global setting rather than beside it, so the field
+   * below stays the one place the overlay colour comes from and can be changed
+   * after a preset has been picked.
+   */
+  const applyPreset = (preset: ThemePreset) => {
+    setThemeError(null);
+    const patch: Partial<Settings> = {
+      theme: { mode: "theme", id: preset.id, colors: preset.colors },
+    };
+    if (preset.captureOutline) patch.captureOutline = preset.captureOutline;
+    void onPatch(patch);
+  };
+
+  const importTheme = async () => {
+    setThemeBusy(true);
+    setThemeError(null);
+    try {
+      const picked = await openDialog({
+        directory: false,
+        multiple: false,
+        title: "Choose a theme file",
+        filters: [{ name: "Themes", extensions: ["zip", "json"] }],
+      });
+      if (typeof picked !== "string") return;
+      const result = await themeImport(picked);
+      refreshPresets();
+      applyPreset(result.theme);
+    } catch (e) {
+      setThemeError(errorMessage(e));
+    } finally {
+      setThemeBusy(false);
+    }
+  };
+
+  const removeTheme = (preset: ThemePreset) => {
+    setThemeError(null);
+    void themeRemove(preset.id)
+      .then(() => {
+        // A removed preset that is still applied would leave the interface on a
+        // palette nothing can describe, so it becomes custom with the same colours.
+        if (settings?.theme.id === preset.id) {
+          void onPatch({
+            theme: { ...settings.theme, mode: "custom", id: "" },
+          });
+        }
+        refreshPresets();
+      })
+      .catch((e) => setThemeError(errorMessage(e)));
+  };
 
   const sectionState = useMemo(() => {
     const searching = query.trim().length > 0;
@@ -1170,8 +1373,29 @@ export function SettingsPanel({
     }
   };
 
-  const runMove = async (target: string) => {
-    setMoving(true);
+  /**
+   * The KeptCraft installer, in two steps: the first click finds out what the
+   * newest release is and names it, the second downloads and starts it.
+   */
+  const installKeptCraftEditor = async () => {
+    setCraftBusy(true);
+    setImageEditorError(null);
+    setCraftNote(null);
+    try {
+      if (!craftOffer) {
+        setCraftOffer(await keptcraftRelease());
+        return;
+      }
+      setCraftNote(await installKeptCraft());
+      setCraftOffer(null);
+    } catch (e) {
+      setImageEditorError(errorMessage(e));
+    } finally {
+      setCraftBusy(false);
+    }
+  };
+
+  const runMove = async (target: string) => {    setMoving(true);
     setStorageError(null);
     try {
       // The backend copies the data and restarts, so this normally never returns.
@@ -1556,7 +1780,18 @@ export function SettingsPanel({
               />
             }
           />
-          {themeRows(settings.theme, (next) => void onPatch({ theme: next }))}
+          {themeRows(
+            settings.theme,
+            presets,
+            (next) => void onPatch({ theme: next }),
+            applyPreset,
+            () => void importTheme(),
+            removeTheme,
+            themeBusy,
+          )}
+          {themeError && (
+            <p className="py-2 text-[10px] leading-relaxed text-danger">{themeError}</p>
+          )}
           <Row
             label="Preview text size"
             hint="Text clips in the quick preview. The preview's own − and + buttons change the same value; 100% is the designed size."
@@ -2679,6 +2914,50 @@ export function SettingsPanel({
                 nothing.
               </p>
             </StackedRow>
+            <Row
+              label="KeptCraft"
+              hint="Downloads the newest KeptCraft from GitHub, checks it against the SHA-256 the release publishes, then starts its installer. After installing, Detect KeptCraft fills the command in."
+              control={
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void installKeptCraftEditor()}
+                    disabled={craftBusy}
+                    title={
+                      craftOffer
+                        ? `Download ${craftOffer.asset.name} and start its installer`
+                        : "Find the newest KeptCraft release for this computer"
+                    }
+                    className="shrink-0 rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
+                  >
+                    {craftBusy
+                      ? "Downloading…"
+                      : craftOffer
+                        ? `Download ${craftOffer.version}`
+                        : "Install KeptCraft…"}
+                  </button>
+                  {craftOffer && !craftBusy && (
+                    <button
+                      type="button"
+                      onClick={() => setCraftOffer(null)}
+                      className="shrink-0 rounded border border-edge bg-panel-2 px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-panel-3 hover:text-ink"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              }
+            />
+            {craftOffer && (
+              <p className="py-2 text-[10px] leading-relaxed text-ink-dim">
+                {craftOffer.version} is the newest release: {craftOffer.asset.name},{" "}
+                {formatBytes(craftOffer.asset.size)}. Downloading it starts KeptCraft's own
+                installer, which may ask for permission to install.
+              </p>
+            )}
+            {craftNote && (
+              <p className="py-2 text-[10px] leading-relaxed text-ink-dim">{craftNote}</p>
+            )}
             {imageEditorError && (
               <p className="py-2 text-[10px] leading-relaxed text-danger">{imageEditorError}</p>
             )}

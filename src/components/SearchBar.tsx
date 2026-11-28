@@ -254,12 +254,12 @@ export function SearchBar({
         <button
           type="button"
           onClick={onAddClip}
-          title="Open a small window and type a clip instead of copying it"
-          aria-label="Add clip"
+          title="Open a small window and write a clip note instead of copying it"
+          aria-label="Add clip note"
           className="flex shrink-0 items-center gap-1 rounded border border-accent/60 bg-accent/20 px-1.5 py-0.5 text-[10px] font-medium text-accent-hi transition-colors hover:bg-accent/30"
         >
           <IconPlus className="size-3" />
-          {!compact && <span>Add clip</span>}
+          {!compact && <span>Add clip note</span>}
         </button>
 
         <button

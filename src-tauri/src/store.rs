@@ -46,6 +46,15 @@ const SAVED_GIFS_COLLECTION: &str = "Saved GIFs";
 /// independently of its name.
 const SAVED_GIFS_KEY: &str = "saved_gifs_collection";
 
+/// The permanent archive holding notes written with Add Clip Note.
+///
+/// It is an archive rather than a flag on the clip, so retention, bulk deletes and
+/// the archive-hiding rules all keep notes without a rule of their own.
+const CLIP_NOTES_COLLECTION: &str = "Clip notes";
+
+/// Remembers the id of [`CLIP_NOTES_COLLECTION`], so a rename cannot orphan it.
+const CLIP_NOTES_KEY: &str = "clip_notes_collection";
+
 /// Clips larger than this are indexed by preview only, so that startup does not
 /// have to decrypt an unbounded amount of text.
 const SEARCH_BODY_LIMIT: i64 = 256 * 1024;
@@ -253,6 +262,8 @@ struct State {
     archived: HashSet<i64>,
     /// The system-owned archive behind the GIF shelf, when it exists.
     saved_gifs: Option<i64>,
+    /// The system-owned archive holding Add Clip Note notes, when it exists.
+    notes: Option<i64>,
 }
 
 pub struct Store {
@@ -333,6 +344,7 @@ impl Store {
                 clips: HashMap::new(),
                 archived: HashSet::new(),
                 saved_gifs: None,
+                notes: None,
             }),
             vault: RwLock::new(None),
             motion_pending: RwLock::new(HashSet::new()),
@@ -604,13 +616,14 @@ impl Store {
 
     /// Rebuilds the whole projection from SQLite. Called once at startup.
     fn rebuild_index(&self) -> Result<()> {
-        let (rows, collections, tags, archived, saved_gifs) = {
+        let (rows, collections, tags, archived, saved_gifs, notes) = {
             let conn = self.conn.lock();
             let rows = query_clips(&conn, None)?;
             let (collections, tags) = load_all_links(&conn)?;
             let archived = load_archived_collections(&conn)?;
-            let saved_gifs = load_saved_gifs(&conn)?;
-            (rows, collections, tags, archived, saved_gifs)
+            let saved_gifs = load_archive_id(&conn, SAVED_GIFS_KEY)?;
+            let notes = load_archive_id(&conn, CLIP_NOTES_KEY)?;
+            (rows, collections, tags, archived, saved_gifs, notes)
         };
 
         let mut index = HashMap::with_capacity(rows.len());
@@ -636,6 +649,7 @@ impl Store {
         self.state.write().clips = index;
         self.state.write().archived = archived;
         self.state.write().saved_gifs = saved_gifs;
+        self.state.write().notes = notes;
         Ok(())
     }
 
@@ -2248,7 +2262,10 @@ impl Store {
     /// The saved-GIF archive is system-owned and deliberately absent: nothing in
     /// the interface can list, pick, rename, unarchive or delete it.
     pub fn collections(&self) -> Result<Vec<Collection>> {
-        let hidden = { self.state.read().saved_gifs };
+        let (saved_gifs, notes) = {
+            let state = self.state.read();
+            (state.saved_gifs, state.notes)
+        };
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT c.id, c.name, c.color, c.archived, c.created_at,
@@ -2269,7 +2286,7 @@ impl Store {
         Ok(rows
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
-            .filter(|collection| Some(collection.id) != hidden)
+            .filter(|collection| Some(collection.id) != saved_gifs && Some(collection.id) != notes)
             .collect())
     }
 
@@ -2281,11 +2298,21 @@ impl Store {
         if let Some(id) = self.state.read().saved_gifs {
             return Ok(id);
         }
+        let id = self.ensure_system_archive(SAVED_GIFS_KEY, SAVED_GIFS_COLLECTION)?;
+        self.state.write().saved_gifs = Some(id);
+        Ok(id)
+    }
+
+    /// Creates an archive the app owns, or finds the one it made earlier.
+    ///
+    /// The id lives in `meta`, so a rename cannot orphan the archive and a restart
+    /// does not add a second one.
+    fn ensure_system_archive(&self, key: &str, wanted: &str) -> Result<i64> {
         let id = {
             let conn = self.conn.lock();
-            match load_saved_gifs(&conn)? {
+            match load_archive_id(&conn, key)? {
                 Some(id) => {
-                    // It is the system archive in spirit and in the schema.
+                    // It is a system archive in spirit as well as in the schema.
                     conn.execute(
                         "UPDATE collections SET archived = 1 WHERE id = ?1",
                         params![id],
@@ -2299,15 +2326,15 @@ impl Store {
                     let taken = conn
                         .query_row(
                             "SELECT 1 FROM collections WHERE name = ?1 COLLATE NOCASE",
-                            params![SAVED_GIFS_COLLECTION],
+                            params![wanted],
                             |_| Ok(true),
                         )
                         .optional()?
                         .unwrap_or(false);
                     let name = if taken {
-                        format!("{SAVED_GIFS_COLLECTION} (system)")
+                        format!("{wanted} (system)")
                     } else {
-                        SAVED_GIFS_COLLECTION.to_string()
+                        wanted.to_string()
                     };
                     conn.execute(
                         "INSERT INTO collections (name, color, archived, created_at)
@@ -2317,16 +2344,63 @@ impl Store {
                     let id = conn.last_insert_rowid();
                     conn.execute(
                         "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
-                        params![SAVED_GIFS_KEY, id.to_string()],
+                        params![key, id.to_string()],
                     )?;
                     id
                 }
             }
         };
-        let mut state = self.state.write();
-        state.archived.insert(id);
-        state.saved_gifs = Some(id);
+        self.state.write().archived.insert(id);
         Ok(id)
+    }
+
+    /// The archive that holds notes written with Add Clip Note.
+    ///
+    /// It is an archive, so retention and bulk deletes leave those clips alone.
+    pub fn clip_notes_archive(&self) -> Result<i64> {
+        if let Some(id) = self.state.read().notes {
+            return Ok(id);
+        }
+        let id = self.ensure_system_archive(CLIP_NOTES_KEY, CLIP_NOTES_COLLECTION)?;
+        self.state.write().notes = Some(id);
+        Ok(id)
+    }
+
+    /// The notes archive as the sidebar shows it, with its clip count.
+    pub fn clip_notes(&self) -> Result<Collection> {
+        let id = self.clip_notes_archive()?;
+        let conn = self.conn.lock();
+        let collection = conn.query_row(
+            "SELECT c.id, c.name, c.color, c.archived, c.created_at,
+                    (SELECT COUNT(*) FROM clip_collections cc WHERE cc.collection_id = c.id)
+               FROM collections c WHERE c.id = ?1",
+            params![id],
+            |row| {
+                Ok(Collection {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    color: row.get(2)?,
+                    archived: row.get::<_, i64>(3)? != 0,
+                    created_at: row.get(4)?,
+                    clip_count: row.get(5)?,
+                })
+            },
+        )?;
+        Ok(collection)
+    }
+
+    /// Files a clip in the notes archive, which keeps it out of every delete path.
+    pub fn add_clip_note(&self, clip_id: i64) -> Result<()> {
+        let archive = self.clip_notes_archive()?;
+        {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT OR IGNORE INTO clip_collections (clip_id, collection_id) VALUES (?1, ?2)",
+                params![clip_id, archive],
+            )?;
+        }
+        self.refresh_entry(clip_id)?;
+        Ok(())
     }
 
     /// Adds a clip to the hidden saved-GIF archive, or releases it again.
@@ -2372,9 +2446,11 @@ impl Store {
         if name.is_empty() {
             return Err(AppError::msg("collection name cannot be empty"));
         }
-        if name.eq_ignore_ascii_case(SAVED_GIFS_COLLECTION) {
+        if name.eq_ignore_ascii_case(SAVED_GIFS_COLLECTION)
+            || name.eq_ignore_ascii_case(CLIP_NOTES_COLLECTION)
+        {
             return Err(AppError::msg(format!(
-                "the name \"{SAVED_GIFS_COLLECTION}\" is reserved"
+                "the name \"{name}\" is reserved"
             )));
         }
         let conn = self.conn.lock();
@@ -2412,8 +2488,14 @@ impl Store {
     /// clips keep their history entry and become visible again the moment the
     /// collection is unarchived.
     pub fn set_collection_archived(&self, id: i64, archived: bool) -> Result<()> {
-        if !archived && self.state.read().saved_gifs == Some(id) {
-            return Err(AppError::msg("the saved GIFs collection is always an archive"));
+        if !archived {
+            let state = self.state.read();
+            if state.saved_gifs == Some(id) {
+                return Err(AppError::msg("the saved GIFs collection is always an archive"));
+            }
+            if state.notes == Some(id) {
+                return Err(AppError::msg("clip notes are always kept, so their archive stays"));
+            }
         }
         let name = self.collection_name(id)?;
         {
@@ -2878,12 +2960,20 @@ impl Store {
         if name.is_empty() {
             return Err(AppError::msg("collection name cannot be empty"));
         }
-        if self.state.read().saved_gifs == Some(id) {
-            return Err(AppError::msg("the saved GIFs collection cannot be renamed"));
+        {
+            let state = self.state.read();
+            if state.saved_gifs == Some(id) {
+                return Err(AppError::msg("the saved GIFs collection cannot be renamed"));
+            }
+            if state.notes == Some(id) {
+                return Err(AppError::msg("the clip notes archive cannot be renamed"));
+            }
         }
-        if name.eq_ignore_ascii_case(SAVED_GIFS_COLLECTION) {
+        if name.eq_ignore_ascii_case(SAVED_GIFS_COLLECTION)
+            || name.eq_ignore_ascii_case(CLIP_NOTES_COLLECTION)
+        {
             return Err(AppError::msg(format!(
-                "the name \"{SAVED_GIFS_COLLECTION}\" is reserved"
+                "the name \"{name}\" is reserved"
             )));
         }
         let previous = self.collection_name(id).ok();
@@ -2936,8 +3026,14 @@ impl Store {
     }
 
     pub fn delete_collection(&self, id: i64) -> Result<()> {
-        if self.state.read().saved_gifs == Some(id) {
-            return Err(AppError::msg("the saved GIFs collection cannot be deleted"));
+        {
+            let state = self.state.read();
+            if state.saved_gifs == Some(id) {
+                return Err(AppError::msg("the saved GIFs collection cannot be deleted"));
+            }
+            if state.notes == Some(id) {
+                return Err(AppError::msg("the clip notes archive cannot be deleted"));
+            }
         }
         let name = self.collection_name(id).ok();
         {
@@ -4449,11 +4545,11 @@ fn load_archived_collections(conn: &Connection) -> Result<HashSet<i64>> {
 }
 
 /// The id remembered for the hidden saved-GIF archive, if the row still exists.
-fn load_saved_gifs(conn: &Connection) -> Result<Option<i64>> {
+fn load_archive_id(conn: &Connection, key: &str) -> Result<Option<i64>> {
     let stored: Option<String> = conn
         .query_row(
             "SELECT value FROM meta WHERE key = ?1",
-            params![SAVED_GIFS_KEY],
+            params![key],
             |row| row.get(0),
         )
         .optional()?;
@@ -6538,6 +6634,76 @@ mod tests {
             0,
         );
         assert_eq!(archived.total, 1);
+    }
+
+    #[test]
+    fn the_notes_archive_is_created_once_and_stays_out_of_the_collection_lists() {
+        let (store, _dir) = test_store();
+        let notes = store.clip_notes().unwrap();
+        assert!(notes.archived, "notes live in an archive, so retention skips them");
+        assert_eq!(notes.name, CLIP_NOTES_COLLECTION);
+        assert_eq!(store.clip_notes().unwrap().id, notes.id, "one archive");
+
+        // A restart finds the same row through the meta table.
+        store.rebuild_index().unwrap();
+        assert_eq!(store.state.read().notes, Some(notes.id));
+        assert!(
+            store.collections().unwrap().is_empty(),
+            "the notes archive has its own row in the sidebar, not a listing"
+        );
+
+        // It is permanent: no rename, no unarchive, no delete.
+        assert!(store.rename_collection(notes.id, "Notes!").is_err());
+        assert!(store.set_collection_archived(notes.id, false).is_err());
+        assert!(store.delete_collection(notes.id).is_err());
+    }
+
+    #[test]
+    fn a_clip_filed_as_a_note_survives_retention() {
+        let (store, _dir) = test_store();
+        let note = match store.insert_clip(unique_text_clip("a kept note")).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        let loose = match store.insert_clip(unique_text_clip("a loose clip")).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            _ => unreachable!(),
+        };
+        store.add_clip_note(note).unwrap();
+        // Filing twice must not double the link.
+        store.add_clip_note(note).unwrap();
+
+        {
+            let conn = store.conn.lock();
+            let two_hours_ago = now_ms() - 2 * 3_600_000;
+            conn.execute(
+                "UPDATE clips SET updated_at = ?1 WHERE id IN (?2, ?3)",
+                params![two_hours_ago, note, loose],
+            )
+            .unwrap();
+        }
+        store.rebuild_index().unwrap();
+        store
+            .update_settings(&serde_json::json!({ "maxAgeHours": 1 }))
+            .unwrap();
+
+        assert_eq!(store.prune().unwrap(), 1, "only the loose clip goes");
+        let notes = store.clip_notes().unwrap();
+        assert_eq!(notes.clip_count, 1, "the note is still in the archive");
+
+        // The collections the user sees are unaffected by the hidden archive.
+        let listed = store
+            .list(
+                &ClipFilter {
+                    collection_id: Some(notes.id),
+                    ..Default::default()
+                },
+                "",
+                10,
+                0,
+            );
+        assert_eq!(listed.items.len(), 1);
+        assert_eq!(listed.items[0].id, note);
     }
 
     #[test]

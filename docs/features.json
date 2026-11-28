@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-27T20:39:12.630Z",
+  "updatedAt": "2026-11-28T00:06:29.934Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -3799,11 +3799,16 @@
       "id": "auto-install-keptcraft-as-part-of-setup-wizard",
       "title": "Auto Install KeptCraft as part of setup wizard and settings",
       "area": "General",
-      "status": "planned",
-      "summary": "Auto Install KeptCraft as part of setup wizard and as an option in the settings page.",
+      "status": "shipped",
+      "summary": "Settings -> Image editor and the setup wizard each offer Install KeptCraft. The release list is read from the GitHub API (releases are pre-releases, so releases/latest 404s), the newest non-draft release with a build for this OS and architecture is chosen - .msi on Windows (arm64 and x64 named apart), the universal .dmg on macOS, .AppImage then .deb then .rpm on Linux - and only files whose SHA-256 matches the digest GitHub publishes are accepted; a build with no digest is never offered. The download streams with a 300 MB cap, is hashed before anything runs, and then hands off: msiexec /i on Windows, open on macOS, the AppImage itself or xdg-open for a package on Linux, where the file is left in Downloads. Settings shows the version, file and size and waits for a second click before downloading; the wizard's notice names where the file went and re-runs detection afterwards.",
       "owner": "",
-      "references": [],
-      "updatedAt": "2026-11-27T18:19:17.475Z"
+      "references": [
+        "src-tauri/src/keptcraft.rs",
+        "src/components/SettingsPanel.tsx",
+        "src/components/FirstRunWizard.tsx"
+      ],
+      "updatedAt": "2026-11-28T00:06:20.095Z",
+      "shippedIn": "next"
     },
     {
       "id": "keep-x11-code-out-of-the-macos-build",
@@ -3908,10 +3913,10 @@
       "title": "Feature - Convert Clip to...",
       "area": "General",
       "status": "backlog",
-      "summary": "Feature - Convert Clip to... (various image formats, video formats, etc)\n\nPDF / Word / Markdown",
+      "summary": "Feature - Convert Clip clips to different format\n\n- text based clips, offer the option to convert to PDF / Word / Markdown files\n- Image clips, allow conversion between jpeg, png, webp, gif\nAdd this as a right-click option, only for files that can be converted.\n\nFind an open source library that will do this work that we can include, don't build it from the ground up. Make sure the conversion process is independent so the main app doesn't lock up during conversion, similar to the video to give conversion.\n\nLet me know what conversions the library supports and see if we want to add more options before you build anything.",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-27T17:08:21.299Z"
+      "updatedAt": "2026-11-27T22:43:12.129Z"
     },
     {
       "id": "feature-ai-tagging-titling-etc",
@@ -3927,11 +3932,17 @@
       "id": "feature-theme-system",
       "title": "Feature - Theme system",
       "area": "General",
-      "status": "planned",
-      "summary": "Currently we have 2 themes, light and dark as well as the ability to edit them. I'd like to turn this into a full theme system, with several themes pre-loaded and a method to add your own theme (in a zip file). \n\nOutline how this will work, then review with me.",
+      "status": "shipped",
+      "summary": "Appearance now offers Dark, Light, Custom and six bundled presets - Midnight, Slate, Sandstone, Forest, Mono and High contrast - each setting all twelve colour tokens at once plus the capture overlay colour when it carries one (applied into the global outline field, so it stays editable). Themes are files: Import theme takes a .zip holding a theme.json or a bare theme.json, reads only that one entry (nothing is extracted, so an entry name can never reach the filesystem), caps the file at 32 KB and the archive at 64 entries, and refuses a theme that is missing a colour, has a non-hex value or no name, naming the offending slot. Ids are slugs kept clear of bundled ids (a shared Midnight becomes midnight-custom) and of earlier imports, so a second import keeps both; files are written through a temp file so a crash cannot leave half a theme. Imported themes live under the app data folder, not the movable data folder, and are listed in the Appearance picker with a swatch chip and a remove button; removing the applied theme drops you into Custom with the same palette. Settings gained theme.id and a theme mode, accepted by the sanitiser, which also clears an id that is not a plain slug, and a downgrade reads it as custom with the same colours.",
       "owner": "",
-      "references": [],
-      "updatedAt": "2026-11-27T20:39:12.630Z"
+      "references": [
+        "src-tauri/src/themes.rs",
+        "src-tauri/src/settings.rs",
+        "src/components/SettingsPanel.tsx",
+        "src/lib/theme.ts"
+      ],
+      "updatedAt": "2026-11-28T00:06:26.919Z",
+      "shippedIn": "next"
     },
     {
       "id": "cross-device-sync",
@@ -3957,11 +3968,17 @@
       "id": "qr-code-scanner",
       "title": "QR Code Scanner",
       "area": "General",
-      "status": "backlog",
-      "summary": "QR Code Scanner — Decode QR codes from clipboard images",
+      "status": "shipped",
+      "summary": "Decodes QR codes in two places. Any picture in the history is read on demand by the preview pane (no column and no backfill, so clips captured before this existed read the same way): the payload is shown with an Open link button when it is an address, and a payload printed without a scheme (example.com/x) is adopted as https. Sealed clips are skipped. Screenshot tools gained Capture QR code (title-bar menu, sidebar strip, tray Capture submenu) which frames a region, reads the code, stores the payload as a text clip so it lands on the clipboard, and opens the browser when it holds a link; a region with no code reports it and stores nothing. The decoder is rqrr, pure Rust, so Windows, macOS and Linux share one implementation, and big pictures are shrunk to 2048px before detection.",
       "owner": "",
-      "references": [],
-      "updatedAt": "2026-11-27T17:08:21.299Z"
+      "references": [
+        "src-tauri/src/qr.rs",
+        "src-tauri/src/commands.rs",
+        "src/App.tsx",
+        "src/components/ClipDetailPane.tsx"
+      ],
+      "updatedAt": "2026-11-28T00:06:16.981Z",
+      "shippedIn": "next"
     },
     {
       "id": "audio-file-quick-preview",
@@ -4236,10 +4253,26 @@
       "title": "\"Show Latest updates\"",
       "area": "General",
       "status": "planned",
-      "summary": "\"Show Latest updates\" content needs updating for 1.2",
+      "summary": "\"Show Latest updates\" content needs updating for 1.2 and it needs to show on the popup that alerts users that there is an update available.",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-27T20:37:56.795Z"
+      "updatedAt": "2026-11-27T22:31:11.084Z"
+    },
+    {
+      "id": "add-clip-note-as-an-item-under-utilities",
+      "title": "Add \"Clip Note\" as an item under utilities",
+      "area": "General",
+      "status": "shipped",
+      "summary": "Add Clip now reads Add Clip Note, in the toolbar button, its tooltip and the window title, and Ctrl+N opens that window from any history view. Every note is filed on creation into a system archive called Clip notes, remembered by id in the meta table, so it is created once, cannot be unarchived or deleted, and - being an archive - is exempt from retention and bulk deletes without a rule of its own. It is hidden from the Collections and Archives lists and instead appears under Utilities with its clip count, opening the same list and card views and scoped search as any collection; its title bar reads Clip notes / kept forever. A typed clip whose text already exists is deliberately not pulled into the archive, because that row belongs where it was captured.",
+      "owner": "",
+      "references": [
+        "src-tauri/src/store.rs",
+        "src-tauri/src/commands.rs",
+        "src/components/Sidebar.tsx",
+        "src/components/AddClipForm.tsx"
+      ],
+      "updatedAt": "2026-11-28T00:06:29.934Z",
+      "shippedIn": "next"
     }
   ]
 }

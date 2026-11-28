@@ -139,10 +139,15 @@ theme and the image editor. It can be re-run from Settings at any time.*
 - **Browses GIPHY** from the same Utilities section, starring GIFs and saving image clips to a
   personal GIF shelf; click any result to copy the animation. The shelf also imports GIF files
   from disk.
+- **Keeps notes** in a permanent archive: **Add Clip Note** (`Ctrl+N`) writes a clip the way a
+  notepad would, and every note lands in *Utilities → Clip notes*, an archive, so retention and bulk
+  deletes leave it alone. That view is the ordinary list and card layout with its own count, and its
+  header says the notes are kept forever. Deduplicated text — a note whose text is already in the
+  history — is not pulled into the archive, because that clip belongs where it was captured.
 - **Annotates** clips with a searchable note, and edits a text clip in place from the preview pane.
 - **Samples colors** from anywhere on screen with the eyedropper in the title bar; a magnifier
   beside the crosshair previews the pixel and its hex/RGB values before you click.
-- **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)); **Capture text** keeps the words recognised in a dragged region as a text clip instead of the picture.
+- **Takes screenshots** of a dragged region or of a whole window, straight into the history (on Linux Beta/X11, capture tools are available with the limitations noted in [docker/README.md](docker/README.md)); **Capture text** keeps the words recognised in a dragged region as a text clip instead of the picture, and **Capture QR code** reads the code in a dragged region, copies its payload and opens the link in your browser when it holds one.
 - **Measures the screen** with an onscreen ruler: drag distances and boxes, click angles, drop
   guides from the edge rulers, and snap to window borders, colour edges, guides or a grid. It is
   available on Windows and on Linux (X11). Its icon-only toolbar names
@@ -493,8 +498,15 @@ reports the problem instead of looking successful.
 **Image editor.** One field holds a whole command line. `{file}` marks where the clip's path goes and
 is appended when missing, so `mspaint.exe` works as typed;
 `C:\Program Files\KeptCraft\keptcraft.exe open-annotate --filepath {file}` is the working example,
-and **Detect KeptCraft** fills it in. Kept watches the file while the editor is open and refreshes the
+and **Detect KeptCraft** fills it in. **Install KeptCraft…** next to it downloads the newest release
+from GitHub over HTTPS, checks the file against the SHA-256 the release publishes and starts its own
+installer, so the wizard and Settings never send you to a browser; a build with no published digest
+is refused rather than trusted. Kept watches the file while the editor is open and refreshes the
 clip on every save, including ShotCraft's habit of writing a new file each time.
+
+**QR codes.** Any picture in the history is read on demand: a clip holding a code shows its payload
+in the preview pane with an **Open link** button when the payload is an address, and nothing is
+stored for it, so old clips are read the same way as new ones.
 
 ## Appearance
 
@@ -508,11 +520,21 @@ clip on every save, including ShotCraft's habit of writing a new file each time.
 | Text scale | 100% | Scales the whole interface, 70–200% |
 | Sidebar lists | 6 items | Collections and archives show this many before **Show all**; tags stop at 10 |
 | Preview pane | shown | Collapse it with the chevron at the pane's top-left; the filter sidebar has its own chevron at its top-right. Its left edge drags to resize, and stops at the width where its own buttons still fit |
-| Theme | Dark | Dark, Light, or Custom with a color picker per token |
+| Theme | Dark | Dark, Light, Custom, or one of six bundled presets, plus any theme you import |
 
 Every window paints the theme's canvas color natively before its page draws, so opening Settings, a
 sticky clip or Stacks never flashes the platform's default background first. The capture
 overlays keep their transparency and are left alone.
+
+A preset sets all twelve colours at once — Midnight, Slate, Sandstone, Forest, Mono and High
+contrast ship with the app — and, when it carries one, the colour the capture overlays draw with;
+that lands in the global outline field, so it stays editable afterwards. **Import theme…** reads a
+`.zip` holding a `theme.json` (or a bare `theme.json`) and refuses anything incomplete: every colour
+must be present and a real hex value, the name must be there, and the archive is only ever read for
+that one file, never extracted. Imported themes are stored as one file each under the app data
+folder rather than the (movable) data folder, so moving your clips does not lose your colours, and a
+theme whose name matches a bundled one gets its own id instead of shadowing it. Removing an imported
+theme that is currently applied leaves you in Custom with the same palette.
 
 Each sidebar category (All clips, Text, Media, Files, Pinned, and collections/tags together) keeps
 its own layout and card size: switching to cards for Media does not drag Text along with it, and

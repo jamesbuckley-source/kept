@@ -57,7 +57,8 @@ export const COLOR_FIELDS: { key: keyof ThemeColors; label: string; hint: string
 
 export function resolveColors(theme: Theme): ThemeColors {
   if (theme.mode === "light") return LIGHT_COLORS;
-  if (theme.mode === "custom") return theme.colors;
+  // A preset carries the palette it was applied with, so it needs no lookup here.
+  if (theme.mode === "custom" || theme.mode === "theme") return theme.colors;
   return DARK_COLORS;
 }
 

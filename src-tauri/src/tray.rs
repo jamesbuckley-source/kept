@@ -29,6 +29,8 @@ const ID_CAPTURE_WINDOW: &str = "capture-window";
 const ID_CAPTURE_SCREEN: &str = "capture-screen";
 const ID_CAPTURE_SCROLLING: &str = "capture-scrolling";
 const ID_CAPTURE_TEXT: &str = "capture-text";
+/// Hides the window, frames a region and reads the QR code inside it.
+const ID_CAPTURE_QR: &str = "capture-qr";
 /// Repeats the area the last region, window or full-screen capture covered.
 const ID_CAPTURE_PREVIOUS: &str = "capture-previous";
 const ID_CAPTURE_COLOR: &str = "capture-color";
@@ -112,12 +114,13 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>> {
     let screen = MenuItem::with_id(app, ID_CAPTURE_SCREEN, "Full screen", true, None::<&str>)?;
     let scrolling = MenuItem::with_id(app, ID_CAPTURE_SCROLLING, "Scrolling", true, None::<&str>)?;
     let text = MenuItem::with_id(app, ID_CAPTURE_TEXT, "Capture text", true, None::<&str>)?;
+    let qr = MenuItem::with_id(app, ID_CAPTURE_QR, "Capture QR code", true, None::<&str>)?;
     let previous = MenuItem::with_id(app, ID_CAPTURE_PREVIOUS, "Previous area", true, None::<&str>)?;
     let capture = Submenu::with_items(
         app,
         "Capture",
         true,
-        &[&region, &capture_window, &screen, &scrolling, &text, &previous],
+        &[&region, &capture_window, &screen, &scrolling, &text, &qr, &previous],
     )?;
 
     let pause_state = crate::commands::pause_state(app);
@@ -196,6 +199,16 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
             crate::commands::run_capture_shortcut(app, CaptureAction::Scrolling)
         }
         ID_CAPTURE_TEXT => crate::commands::run_capture_shortcut(app, CaptureAction::Text),
+        ID_CAPTURE_QR => {
+            // No global shortcut of its own: scanning a code is a deliberate act,
+            // so it is reached from here and from the capture menus.
+            if let Err(e) = crate::commands::capture_qr_region(
+                app.clone(),
+                app.state::<AppState>(),
+            ) {
+                log::warn!("could not start a QR capture: {e}");
+            }
+        }
         ID_CAPTURE_COLOR => crate::commands::run_capture_shortcut(app, CaptureAction::Color),
         ID_CAPTURE_PREVIOUS => {
             crate::commands::run_capture_shortcut(app, CaptureAction::PreviousArea)

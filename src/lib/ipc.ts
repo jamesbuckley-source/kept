@@ -28,6 +28,7 @@ import type {
   StackCopyOutcome,
   StackDropOutcome,
   StackEntry,
+  ThemePreset,
   SplitOutcome,
   Stats,
   TypedClipOutcome,
@@ -164,6 +165,77 @@ export function captureScrollingWindow(): Promise<void> {
 /** Hides the window, frames a region and keeps the text found inside it. */
 export function captureTextRegion(): Promise<void> {
   return invoke("capture_text_region");
+}
+
+/** Hides the window, frames a region and reads the QR code inside it. */
+export function captureQrRegion(): Promise<void> {
+  return invoke("capture_qr_region");
+}
+
+/** A KeptCraft release, and the build inside it this machine would download. */
+export interface KeptCraftRelease {
+  /** The tag it was published under, such as `v0.3.0-beta.2`. */
+  version: string;
+  asset: {
+    name: string;
+    url: string;
+    size: number;
+    /** Lower-case hex SHA-256, checked before anything runs. */
+    sha256: string;
+  };
+}
+
+/** The newest KeptCraft build for this machine, without downloading it. */
+export function keptcraftRelease(): Promise<KeptCraftRelease> {
+  return invoke<KeptCraftRelease>("keptcraft_release");
+}
+
+/**
+ * Downloads the newest KeptCraft, checks its SHA-256 against the published digest
+ * and starts the installer. Resolves with a sentence naming where it landed.
+ */
+export function installKeptCraft(): Promise<string> {
+  return invoke<string>("install_keptcraft");
+}
+
+/** Every palette the Appearance page offers: bundled first, then imported. */
+export function themesList(): Promise<ThemePreset[]> {
+  return invoke<ThemePreset[]>("themes_list");
+}
+
+/** The permanent archive the Add Clip Note button writes into. */
+export function clipNotes(): Promise<Collection> {
+  return invoke<Collection>("clip_notes");
+}
+
+/** What reading a theme file produced. */
+export interface ThemeImportResult {
+  theme: ThemePreset;
+  /** True when an import landed on a name that already existed. */
+  replaced: boolean;
+}
+
+/** Imports a theme from a `.zip` holding a theme.json, or from a bare `.json`. */
+export function themeImport(path: string): Promise<ThemeImportResult> {
+  return invoke<ThemeImportResult>("theme_import", { path });
+}
+
+/** Deletes an imported theme; bundled presets are refused by the backend. */
+export function themeRemove(id: string): Promise<void> {
+  return invoke("theme_remove", { id });
+}
+
+/** A QR code read out of a picture. */
+export interface ScannedCode {
+  /** Exactly what the code holds. */
+  text: string;
+  /** The address a browser can load, when the payload is one. */
+  url: string | null;
+}
+
+/** The QR codes in a stored picture, read on demand. */
+export function clipQr(id: number): Promise<ScannedCode[]> {
+  return invoke<ScannedCode[]>("clip_qr", { id });
 }
 
 /** The macOS privacy grants the capture and paste features need. */

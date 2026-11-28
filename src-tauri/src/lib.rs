@@ -22,6 +22,7 @@ mod faces;
 mod giphy;
 mod hashing;
 mod hotkey;
+mod keptcraft;
 mod legacy;
 mod markdown;
 mod media;
@@ -41,6 +42,7 @@ mod paste;
 mod picker;
 mod preview;
 mod printscreen;
+mod qr;
 mod recorder;
 mod ruler;
 mod search;
@@ -49,6 +51,7 @@ mod settings;
 mod sound;
 mod storage;
 mod stitch;
+mod themes;
 mod store;
 mod tray;
 #[cfg(windows)]
@@ -172,6 +175,7 @@ pub fn run() {
     commands::capture_previous_area,
     commands::capture_scrolling_window,
     commands::capture_text_region,
+    commands::capture_qr_region,
     commands::cancel_capture_delay,
     commands::permissions,
     commands::request_permission,
@@ -253,6 +257,13 @@ pub fn run() {
             commands::resume_capture,
             commands::set_collection_archived,
             commands::copy_ocr_text,
+            commands::clip_qr,
+            commands::keptcraft_release,
+            commands::install_keptcraft,
+            commands::themes_list,
+            commands::theme_import,
+            commands::theme_remove,
+            commands::clip_notes,
             commands::ensure_color_scheme,
             commands::add_scheme_color,
             commands::reveal_clip,

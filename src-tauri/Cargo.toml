@@ -58,6 +58,9 @@ hex = "0.4"
 base64 = "0.22"
 
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# QR decoding for clipboard pictures and the "Capture QR code" tool. Pure Rust,
+# so every port gets the same decoder with nothing extra to install.
+rqrr = "0.9"
 
 # Face detection runs a vendored YuNet ONNX model on this interpreter: pure Rust,
 # so the installer stays a single self-contained exe with no runtime to ship.
@@ -69,6 +72,7 @@ parking_lot = "0.12"
 uuid = { version = "1", features = ["v4"] }
 # Blocks on the WinRT async operation that drives text recognition.
 pollster = "0.4"
+zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -135,6 +139,9 @@ block2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
+# Encodes the QR pictures the decoder tests read, so the round trip is real.
+qrcode = "0.14"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

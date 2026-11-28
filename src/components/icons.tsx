@@ -620,6 +620,19 @@ export function IconTextCapture({ className }: IconProps) {
   );
 }
 
+/** Three finder squares and a stray module: a code being scanned. */
+export function IconQrCapture({ className }: IconProps) {
+  return frame(
+    className,
+    <>
+      <rect x="2.4" y="2.4" width="4" height="4" rx="0.6" />
+      <rect x="9.6" y="2.4" width="4" height="4" rx="0.6" />
+      <rect x="2.4" y="9.6" width="4" height="4" rx="0.6" />
+      <path d="M9.6 9.6h1.6v1.6M13.6 12.6h-1.4M12.2 13.6v-1.6" />
+    </>,
+  );
+}
+
 export function IconFace({ className }: IconProps) {
   return frame(
     className,

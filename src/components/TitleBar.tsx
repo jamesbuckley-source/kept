@@ -14,6 +14,7 @@ import {
   IconMaximize,
   IconMinimize,
   IconPreviousArea,
+  IconQrCapture,
   IconRecord,
   IconRegionCapture,
   IconRestore,
@@ -43,6 +44,8 @@ interface TitleBarProps {
   onCaptureScrolling: () => void;
   /** Hides the window, frames a region and keeps the text found inside it. */
   onCaptureText: () => void;
+  /** Hides the window, frames a region and reads the QR code inside it. */
+  onCaptureQr: () => void;
   /** Hides the window and opens the onscreen ruler. */
   onOpenRuler: () => void;
   /** Opens the recording toolbar, beside the capture group. */
@@ -77,6 +80,7 @@ export function TitleBar({
   onCapturePrevious,
   onCaptureScrolling,
   onCaptureText,
+  onCaptureQr,
   onOpenRuler,
   onRecord,
   stackCount,
@@ -111,6 +115,12 @@ export function TitleBar({
       label: "Capture text from a region",
       Icon: IconTextCapture,
       run: onCaptureText,
+    },
+    {
+      id: "qr",
+      label: "Capture a QR code from a region",
+      Icon: IconQrCapture,
+      run: onCaptureQr,
     },
   ] satisfies { id: CaptureMode; label: string; Icon: typeof IconRegionCapture; run: () => void }[];
 

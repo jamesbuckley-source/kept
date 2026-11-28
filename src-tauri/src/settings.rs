@@ -98,7 +98,8 @@ impl ThemeColors {
         }
     }
 
-    fn sanitized(mut self) -> Self {
+    /// Fills any slot that is not a usable hex colour with the shipped dark one.
+    pub(crate) fn sanitized(mut self) -> Self {
         let defaults = ThemeColors::dark();
         for (slot, fallback) in [
             (&mut self.canvas, defaults.canvas),
@@ -188,10 +189,12 @@ impl ViewModes {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Theme {
-    /// "dark", "light" or "custom".
+    /// "dark", "light", "custom" or "theme".
     pub mode: String,
-    /// Only consulted in custom mode; kept so switching back and forth does not
-    /// lose hand-picked colors.
+    /// The bundled or imported preset in use, when `mode` is "theme".
+    pub id: String,
+    /// Only consulted in custom and preset mode; kept so switching back and forth
+    /// does not lose hand-picked colors.
     pub colors: ThemeColors,
 }
 
@@ -199,6 +202,7 @@ impl Default for Theme {
     fn default() -> Self {
         Theme {
             mode: "dark".into(),
+            id: String::new(),
             colors: ThemeColors::dark(),
         }
     }
@@ -206,8 +210,25 @@ impl Default for Theme {
 
 impl Theme {
     fn sanitized(mut self) -> Self {
-        if !matches!(self.mode.as_str(), "dark" | "light" | "custom") {
+        if !matches!(
+            self.mode.as_str(),
+            "dark" | "light" | "custom" | "theme"
+        ) {
             self.mode = "dark".into();
+        }
+        // An id is a file name, so anything else is dropped rather than trusted.
+        let plain = !self.id.is_empty()
+            && self.id.chars().count() <= 60
+            && self
+                .id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !plain {
+            self.id.clear();
+            if self.mode == "theme" {
+                // A preset that cannot be named is the palette already stored.
+                self.mode = "custom".into();
+            }
         }
         self.colors = self.colors.sanitized();
         self
@@ -215,12 +236,12 @@ impl Theme {
 
     /// The colour a native window should paint before its page draws.
     ///
-    /// The built-in modes use their own palette's canvas; custom mode uses the
-    /// stored one, which `sanitized` has already checked is a hex colour.
+    /// The built-in modes use their own palette's canvas; custom and preset modes
+    /// use the stored one, which `sanitized` has already checked is a hex colour.
     pub fn canvas(&self) -> String {
         match self.mode.as_str() {
             "light" => ThemeColors::light().canvas,
-            "custom" => self.colors.canvas.clone(),
+            "custom" | "theme" => self.colors.canvas.clone(),
             _ => ThemeColors::dark().canvas,
         }
     }
@@ -1324,6 +1345,50 @@ mod tests {
             .update_settings(&serde_json::json!({ "theme": { "mode": "light" } }))
             .unwrap();
         assert_eq!(light.theme.mode, "light");
+    }
+
+    #[test]
+    fn a_preset_theme_keeps_its_id_and_its_palette() {
+        let store = memory_store();
+        let preset = crate::themes::builtin("midnight").expect("a bundled preset");
+        let applied = store
+            .update_settings(&serde_json::json!({
+                "theme": { "mode": "theme", "id": preset.id, "colors": preset.colors }
+            }))
+            .unwrap();
+        assert_eq!(applied.theme.mode, "theme");
+        assert_eq!(applied.theme.id, "midnight");
+        assert_eq!(
+            applied.theme.canvas(),
+            preset.colors.canvas,
+            "the window paints the preset's canvas, not the dark default"
+        );
+
+        // An id is a file name, so anything else is dropped rather than trusted.
+        let junk = store
+            .update_settings(&serde_json::json!({
+                "theme": { "mode": "theme", "id": "../secrets" }
+            }))
+            .unwrap();
+        assert_eq!(junk.theme.id, "", "a path is not an id");
+        assert_eq!(
+            junk.theme.mode, "custom",
+            "a preset nobody can name is the palette already stored"
+        );
+    }
+
+    #[test]
+    fn settings_written_before_themes_had_ids_still_load() {
+        let store = memory_store();
+        // The shape an older build wrote: a mode and a palette, no id.
+        let loaded = store
+            .update_settings(&serde_json::json!({
+                "theme": { "mode": "custom", "colors": { "canvas": "#123456" } }
+            }))
+            .unwrap();
+        assert_eq!(loaded.theme.mode, "custom");
+        assert_eq!(loaded.theme.id, "");
+        assert_eq!(loaded.theme.canvas(), "#123456");
     }
 
     #[test]
