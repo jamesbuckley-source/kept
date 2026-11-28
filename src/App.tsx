@@ -149,6 +149,7 @@ import {
 } from "./lib/ipc";
 import type { ClipAction } from "./lib/actions";
 import { parseSearch, removeToken } from "./lib/search";
+import { bundledReleaseNotes, notesHighlights } from "./lib/releaseNotes";
 import { applyTheme } from "./lib/theme";
 import { tagColorMap } from "./lib/tagColor";
 import {
@@ -711,6 +712,16 @@ function MainApp() {
       openWhatsNewWindow().catch((e) => setError(errorMessage(e)));
     },
   });
+
+  // The banner that announces a release says what is in it: the headlines of the
+  // pending body, or of the notes bundled with this build when GitHub has none.
+  const releaseNotes =
+    updater.state.kind === "available" ? (updater.state.notes ?? bundledReleaseNotes) : null;
+  const releaseHighlights = useMemo(() => notesHighlights(releaseNotes, 3), [releaseNotes]);
+  const releaseHighlightCount = useMemo(
+    () => notesHighlights(releaseNotes, 60).length,
+    [releaseNotes],
+  );
 
   // ---- derived data -------------------------------------------------------
 
@@ -3547,7 +3558,17 @@ function MainApp() {
           role="status"
           className="flex shrink-0 items-center gap-2 border-b border-accent/30 bg-accent/10 px-3 py-1.5 text-[11px] text-accent-hi"
         >
-          <span className="min-w-0 flex-1">Kept {updater.state.version} is available.</span>
+          <span className="min-w-0 flex-1">
+            Kept {updater.state.version} is available.
+            {releaseHighlights.length > 0 && (
+              <span className="block truncate text-[10px] text-accent-hi/80">
+                {releaseHighlights.join(" · ")}
+                {releaseHighlightCount > releaseHighlights.length
+                  ? ` · +${releaseHighlightCount - releaseHighlights.length} more`
+                  : ""}
+              </span>
+            )}
+          </span>
           <button
             type="button"
             onClick={() => {

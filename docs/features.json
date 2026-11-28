@@ -2,7 +2,7 @@
   "format": "copypaste-feature-tracker",
   "version": 1,
   "title": "Kept features",
-  "updatedAt": "2026-11-28T00:06:29.934Z",
+  "updatedAt": "2026-11-28T00:50:37.191Z",
   "features": [
     {
       "id": "copy-label-appears-too-late",
@@ -4252,11 +4252,11 @@
       "id": "show-latest-updates",
       "title": "\"Show Latest updates\"",
       "area": "General",
-      "status": "planned",
+      "status": "in-progress",
       "summary": "\"Show Latest updates\" content needs updating for 1.2 and it needs to show on the popup that alerts users that there is an update available.",
       "owner": "",
       "references": [],
-      "updatedAt": "2026-11-27T22:31:11.084Z"
+      "updatedAt": "2026-11-28T00:50:37.191Z"
     },
     {
       "id": "add-clip-note-as-an-item-under-utilities",

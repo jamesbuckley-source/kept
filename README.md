@@ -1107,9 +1107,12 @@ Two repository secrets drive signing, and losing either breaks future signed Win
 
 Keep a backup of the private key: a release signed with a different key is rejected by installed
 copies. The update check is on by default; *Settings → About* turns it off and offers a manual
-check. When a release is waiting, a *What's new* link sits next to *Check now*, and the first launch
-after an update offers the same link to the release notes. Linux users can install/update by downloading
-the latest packages from the releases page while Linux support is in Beta.
+check. When a release is waiting, the banner names the version and lists the headlines of what is in
+it, with a *What's new* link beside it to the full notes; the first launch after an update offers the
+same link. *Show latest updates* in About always has something real to show: the pending release's
+notes when one is waiting, and otherwise the notes bundled with the version you are running, so they
+read the same offline. Linux users can install/update by downloading the latest packages from the
+releases page while Linux support is in Beta.
 
 ## Tests
 
