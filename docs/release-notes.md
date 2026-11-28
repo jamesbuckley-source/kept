@@ -1,3 +1,26 @@
+## Themes
+
+The two-way light/dark switch is now a theme system, all of it in
+*Settings -> Appearance -> Themes*.
+
+- **Eight palettes in one row:** Dark and Light sit beside Midnight, Slate,
+  Sandstone, Forest, Mono and High contrast, each with a swatch of what it paints.
+  One press sets all twelve colours at once, so a theme never leaves a stray tone
+  from the one before it behind.
+- **The capture overlays follow the theme.** A palette can carry the colour the
+  region border, window highlight and size chip draw with; it lands in the outline
+  setting, so it can still be changed afterwards.
+- **Customize** is one press away underneath, and opens the picker for every
+  colour - the same tokens as before, just no longer a separate mode to find.
+- **Import theme** takes a `.zip` holding a `theme.json` (or a bare `theme.json`)
+  and adds it to the row. Every colour in the file must be present and a real hex
+  value, and the importer reads that one file and nothing else, so a theme cannot
+  bring anything else along with it. Imported themes are stored as one small file
+  each under the app data folder, which means a theme survives moving your history
+  folder and can be shared by copying a single file. A theme whose name matches a
+  bundled one keeps its own id instead of shadowing it, and imported ones carry a
+  small remove button.
+
 ## Stacks live in their own window
 
 The paste queue - formerly "Paste stack" - is now one thing instead of three. The
