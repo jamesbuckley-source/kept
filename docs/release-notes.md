@@ -176,6 +176,14 @@ same tools, snapping, readouts and keys as the Windows version.
 - **Tray menu:** added **“Open Kept”** as the top tray menu item to quickly show/focus
   the main window.
 
+## Linux packages
+
+The Linux packages for 1.3.0 were never attached: two of the new KeptCraft tests
+asserted against the platform they were compiled for, so they passed on Windows and
+failed on the Linux runner. They now name the platform they are asking about. 1.3.1
+is the same release with that fixed, which is why the `.deb`, `.AppImage` and `.rpm`
+files are here.
+
 ## Packaging and docs
 
 - Release automation builds and uploads Linux packages for tagged releases.

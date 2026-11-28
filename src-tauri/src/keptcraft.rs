@@ -51,6 +51,14 @@ enum Os {
 }
 
 impl Os {
+    fn name(self) -> &'static str {
+        match self {
+            Os::Windows => "Windows",
+            Os::Macos => "macOS",
+            Os::Linux => "Linux",
+        }
+    }
+
     fn here() -> Os {
         if cfg!(windows) {
             Os::Windows
@@ -88,7 +96,7 @@ pub async fn latest() -> Result<Release> {
         .json()
         .await
         .map_err(|e| AppError::msg(format!("could not read the release list: {e}")))?;
-    pick_release(&body)
+    pick_release(&body, Os::here(), std::env::consts::ARCH)
 }
 
 /// Chooses the release and build from the API's answer.
@@ -96,7 +104,7 @@ pub async fn latest() -> Result<Release> {
 /// Drafts are ignored — they are not published — and the list arrives newest
 /// first, so the first usable entry wins. Only `keptcraft-…` files are eligible:
 /// the repository's older releases shipped a differently named app.
-fn pick_release(list: &Value) -> Result<Release> {
+fn pick_release(list: &Value, os: Os, arch: &str) -> Result<Release> {
     let releases = list
         .as_array()
         .ok_or_else(|| AppError::msg("GitHub did not return a list of releases"))?;
@@ -112,7 +120,7 @@ fn pick_release(list: &Value) -> Result<Release> {
         let Some(assets) = release["assets"].as_array() else {
             continue;
         };
-        if let Some(asset) = select_asset(assets, Os::here(), std::env::consts::ARCH) {
+        if let Some(asset) = select_asset(assets, os, arch) {
             return Ok(Release {
                 version: version.to_string(),
                 asset,
@@ -121,9 +129,8 @@ fn pick_release(list: &Value) -> Result<Release> {
     }
     Err(AppError::msg(if seen_any {
         format!(
-            "the newest KeptCraft release has no installer for {} {}. Download one from the release page instead.",
-            std::env::consts::OS,
-            std::env::consts::ARCH
+            "the newest KeptCraft release has no installer for {} {arch}. Download one from the release page instead.",
+            os.name()
         )
     } else {
         "KeptCraft has no published releases yet".to_string()
@@ -443,7 +450,7 @@ mod tests {
                 "assets": assets(&["keptcraft-0.3.0-beta.2-windows-x64.msi"]),
             },
         ]);
-        let release = pick_release(&list).expect("a release");
+        let release = pick_release(&list, Os::Windows, "x86_64").expect("a release");
         assert_eq!(release.version, "v0.3.0-beta.2");
         assert_eq!(release.asset.sha256, "a".repeat(64));
     }
@@ -455,8 +462,13 @@ mod tests {
             "draft": false,
             "assets": assets(&["keptcraft-0.3.0-linux-x86_64.AppImage"]),
         }]);
-        let error = pick_release(&list).expect_err("nothing for Windows");
-        assert!(error.to_string().contains("no installer for"));
+        let error =
+            pick_release(&list, Os::Windows, "x86_64").expect_err("nothing for Windows");
+        assert!(error.to_string().contains("no installer for"), "got {error}");
+        // The same list does serve the platform it was built for, which is what
+        // makes the failure above about the target and not about the release.
+        let linux = pick_release(&list, Os::Linux, "x86_64").expect("a Linux build");
+        assert_eq!(linux.asset.name, "keptcraft-0.3.0-linux-x86_64.AppImage");
     }
 
     #[test]
