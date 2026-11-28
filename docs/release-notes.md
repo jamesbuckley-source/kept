@@ -94,6 +94,18 @@ used up when the paste actually landed.
 stop typing, with **Copy as new** and **Done** beside it, so a note never depends
 on remembering to press save.
 
+## Add Clip Note
+
+The *Add clip* button is now *Add Clip Note*, and what it writes is kept: every note
+lands in **Utilities -> Clip notes**, an archive of its own with a count beside it,
+the usual card and list layouts, and search that stays inside the notes. Because it
+is an archive, retention and every bulk delete leave notes alone, and the header
+says so: *Clip notes - kept forever*. `Ctrl`+`N` opens the same window from any view.
+
+A note whose text is already in your history is left where it is rather than being
+pulled into the archive, so a clip you captured keeps belonging to where it came
+from.
+
 ## Capture text
 
 A new capture kind takes the same region drag a screenshot does, but keeps the
@@ -107,6 +119,28 @@ and an area with no words in it adds nothing and says so.
 → Capture shortcuts*, where it can be given a shortcut of its own. It behaves as
 the other kinds do: the app hides for the capture, the delay applies, and Print
 Screen runs it when it is the remembered capture type.
+
+## KeptCraft, installed from Kept
+
+*Settings -> Image editor* and the setup wizard each carry **Install KeptCraft**.
+Pressing it finds the newest release on GitHub, picks the build for this machine, and
+downloads it over HTTPS, checking the file against the SHA-256 the release itself
+publishes before anything runs - a build without a published digest is never
+offered. Settings names the version, file and size first, so the download is a second
+click and not a surprise.
+
+What happens next is the platform's own installer: an MSI wizard on Windows, the disk
+image on macOS, the AppImage or the desktop's package handler on Linux. Once it has
+finished, *Detect KeptCraft* fills the editor command in as before.
+
+## What's new, where the update is offered
+
+The band that announces an available update used to say only that one existed. It now
+lists what is in the release, headline by headline, under the version, with *+N more*
+when the list runs on, and the existing *What's new* link beside it for the full
+notes. *Settings -> About -> Show latest updates* always has the real notes to show:
+the pending release's when one is waiting, and otherwise the notes that ship inside
+the build you are running, so the panel reads the same offline as it does online.
 
 ## Linux support (Beta)
 
@@ -141,12 +175,6 @@ same tools, snapping, readouts and keys as the Windows version.
   content-driven resize settles.
 - **Tray menu:** added **“Open Kept”** as the top tray menu item to quickly show/focus
   the main window.
-
-## Linux packages
-
-The Linux build for 1.2.0 stopped on a compile error in the picture-clipboard
-code, which is Windows-only; 1.2.1 is the same release with that fixed, so the
-`.deb`, `.AppImage` and `.rpm` packages are attached here.
 
 ## Packaging and docs
 

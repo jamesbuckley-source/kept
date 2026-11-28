@@ -3808,7 +3808,7 @@
         "src/components/FirstRunWizard.tsx"
       ],
       "updatedAt": "2026-11-28T00:06:20.095Z",
-      "shippedIn": "next"
+      "shippedIn": "1.3.0"
     },
     {
       "id": "keep-x11-code-out-of-the-macos-build",
@@ -3942,7 +3942,7 @@
         "src/lib/theme.ts"
       ],
       "updatedAt": "2026-11-28T00:06:26.919Z",
-      "shippedIn": "next"
+      "shippedIn": "1.3.0"
     },
     {
       "id": "cross-device-sync",
@@ -3978,7 +3978,7 @@
         "src/components/ClipDetailPane.tsx"
       ],
       "updatedAt": "2026-11-28T00:06:16.981Z",
-      "shippedIn": "next"
+      "shippedIn": "1.3.0"
     },
     {
       "id": "audio-file-quick-preview",
@@ -4261,7 +4261,8 @@
         "src/components/SettingsPanel.tsx",
         "docs/release-notes.md"
       ],
-      "updatedAt": "2026-11-28T00:53:29.238Z"
+      "updatedAt": "2026-11-28T00:53:29.238Z",
+      "shippedIn": "1.3.0"
     },
     {
       "id": "add-clip-note-as-an-item-under-utilities",
@@ -4277,7 +4278,7 @@
         "src/components/AddClipForm.tsx"
       ],
       "updatedAt": "2026-11-28T00:06:29.934Z",
-      "shippedIn": "next"
+      "shippedIn": "1.3.0"
     }
   ]
 }
