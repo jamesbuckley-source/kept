@@ -36,6 +36,7 @@ import {
   validateHotkey,
   setStorageDir,
 } from "../lib/ipc";
+import { bundledReleaseNotes } from "../lib/releaseNotes";
 import { COLOR_FIELDS, resolveColors } from "../lib/theme";
 import {
   DEFAULT_CAPTURE_OUTLINE,
@@ -45,6 +46,7 @@ import {
   type StorageInfo,
   type VaultStatus,
   type Theme,
+  type ThemeMode,
   type ThemePreset,
   type ViewMode,
 } from "../lib/types";
@@ -883,13 +885,12 @@ function ThemeChip({
 }
 
 /**
- * Theme controls as individual rows, so the settings search can filter them like
- * any other setting.
+ * The theme picker, as one searchable row.
  *
- * Dark and light stay two buttons because they are modes, not palettes; every
- * other palette is a preset that fills in all twelve colours at once and, when it
- * carries one, the capture overlay colour. The colour pickers appear only once a
- * colour is being changed by hand.
+ * Dark and Light sit in the strip next to the other palettes they are; every entry
+ * fills in all twelve colours at once and, when it carries one, the capture overlay
+ * colour. Customize is the way out of the presets, and the colour pickers only
+ * appear once a colour is being changed by hand.
  */
 function themeRows(
   theme: Theme,
@@ -901,104 +902,57 @@ function themeRows(
   busy: boolean,
 ): ReactNode {
   const colors = resolveColors(theme);
-  const activePreset = theme.mode === "theme" ? theme.id : "";
+  /** Dark and Light are modes as well as presets, so they are matched by mode. */
+  const isActive = (preset: ThemePreset) =>
+    preset.id === "dark" || preset.id === "light"
+      ? theme.mode === preset.id
+      : theme.mode === "theme" && theme.id === preset.id;
 
   const rows: ReactNode[] = [
     <Row
-      key="theme-mode"
-      label="Theme"
-      hint="Presets repaint the whole interface and the colour capture overlays draw with. Custom exposes every colour."
+      key="themes"
+      label="Themes"
+      hint="One press repaints the whole interface, and the colour the capture overlays draw with when the theme carries one."
       control={
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          {(
-            [
-              { id: "dark", label: "Dark" },
-              { id: "light", label: "Light" },
-            ] as const
-          ).map((mode) => (
+        <div className="flex max-w-[330px] flex-col items-end gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {presets.map((preset) => (
+              <ThemeChip
+                key={preset.id}
+                preset={preset}
+                active={isActive(preset)}
+                onPick={() => onApplyPreset(preset)}
+                onRemove={preset.builtin ? undefined : () => onRemovePreset(preset)}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
             <button
-              key={mode.id}
               type="button"
-              aria-pressed={theme.mode === mode.id}
-              onClick={() => onChange({ mode: mode.id, id: "", colors: resolveColors(theme) })}
+              aria-pressed={theme.mode === "custom"}
+              onClick={() => onChange({ mode: "custom", id: "", colors: resolveColors(theme) })}
+              title="Pick every colour yourself"
               className={`rounded border px-2 py-0.5 text-[10px] transition-colors ${
-                theme.mode === mode.id
+                theme.mode === "custom"
                   ? "border-accent-dim bg-accent/20 text-ink"
                   : "border-edge bg-panel-2 text-ink-faint hover:bg-panel-3 hover:text-ink-dim"
               }`}
             >
-              {mode.label}
+              Customize
             </button>
-          ))}
-          <button
-            type="button"
-            aria-pressed={theme.mode === "custom"}
-            onClick={() => onChange({ mode: "custom", id: "", colors: resolveColors(theme) })}
-            title="Pick every colour yourself"
-            className={`rounded border px-2 py-0.5 text-[10px] transition-colors ${
-              theme.mode === "custom"
-                ? "border-accent-dim bg-accent/20 text-ink"
-                : "border-edge bg-panel-2 text-ink-faint hover:bg-panel-3 hover:text-ink-dim"
-            }`}
-          >
-            Custom
-          </button>
+            <button
+              type="button"
+              onClick={onImport}
+              disabled={busy}
+              className="rounded border border-edge bg-panel-2 px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
+            >
+              {busy ? "Importing…" : "Import theme…"}
+            </button>
+          </div>
         </div>
       }
     />,
   ];
-
-  const builtin = presets.filter((preset) => preset.builtin);
-  const imported = presets.filter((preset) => !preset.builtin);
-
-  rows.push(
-    <Row
-      key="theme-presets"
-      label="Presets"
-      hint="Each one sets every colour, so switching between them never leaves a stray tone behind."
-      control={
-        <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
-          {builtin.map((preset) => (
-            <ThemeChip
-              key={preset.id}
-              preset={preset}
-              active={activePreset === preset.id}
-              onPick={() => onApplyPreset(preset)}
-            />
-          ))}
-        </div>
-      }
-    />,
-  );
-
-  rows.push(
-    <Row
-      key="theme-import"
-      label="Imported themes"
-      hint="A theme is a .zip holding a theme.json, or a bare theme.json. Every colour must be present, so a shared theme looks the way its author meant it to."
-      control={
-        <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
-          {imported.map((preset) => (
-            <ThemeChip
-              key={preset.id}
-              preset={preset}
-              active={activePreset === preset.id}
-              onPick={() => onApplyPreset(preset)}
-              onRemove={() => onRemovePreset(preset)}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={onImport}
-            disabled={busy}
-            className="rounded border border-edge bg-panel-2 px-2 py-0.5 text-[10px] text-ink-faint transition-colors hover:bg-panel-3 hover:text-ink disabled:opacity-40"
-          >
-            {busy ? "Importing…" : "Import theme…"}
-          </button>
-        </div>
-      }
-    />,
-  );
 
   if (theme.mode === "custom") {
     rows.push(
@@ -1218,8 +1172,12 @@ export function SettingsPanel({
    */
   const applyPreset = (preset: ThemePreset) => {
     setThemeError(null);
+    // Dark and Light are modes, so picking them keeps the palette out of the
+    // settings file; every other chip stores the colours it painted.
+    const mode: ThemeMode =
+      preset.id === "dark" ? "dark" : preset.id === "light" ? "light" : "theme";
     const patch: Partial<Settings> = {
-      theme: { mode: "theme", id: preset.id, colors: preset.colors },
+      theme: { mode, id: mode === "theme" ? preset.id : "", colors: preset.colors },
     };
     if (preset.captureOutline) patch.captureOutline = preset.captureOutline;
     void onPatch(patch);
@@ -1561,7 +1519,7 @@ export function SettingsPanel({
               hint={
                 updateState.kind === "available"
                   ? `Kept ${updateState.version} is waiting to be installed; its notes are below.`
-                  : "Read the release notes here instead of leaving for GitHub."
+                  : "The notes shipped with this version, read here instead of leaving for GitHub."
               }
               control={
                 <button
@@ -1580,7 +1538,11 @@ export function SettingsPanel({
                   version={
                     updateState.kind === "available" ? updateState.version : appVersion
                   }
-                  notes={updateState.kind === "available" ? updateState.notes : null}
+                  notes={
+                    updateState.kind === "available" && updateState.notes
+                      ? updateState.notes
+                      : bundledReleaseNotes
+                  }
                   className="h-[380px] w-full rounded border border-edge bg-canvas"
                 />
               </div>

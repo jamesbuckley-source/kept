@@ -1,10 +1,11 @@
 //! Named palettes: the ones bundled with Kept and the ones imported from a file.
 //!
-//! Dark and light are not here — they are the two modes the interface already
-//! has. Everything else is a preset: a whole palette chosen at once, plus the
-//! colour the capture overlays draw with. Imported presets are kept as JSON files
-//! under the app data folder, not in the (movable) data folder, so a theme
-//! survives a data folder change and can be shared by copying one file.
+//! Dark and Light lead the list: they stay modes as well as presets, so a settings
+//! file written before presets existed still resolves without a stored palette.
+//! Everything else is a preset — a whole palette chosen at once, plus the colour
+//! the capture overlays draw with when the theme carries one. Imported presets are
+//! kept as JSON files under the app data folder, not in the (movable) data folder,
+//! so a theme survives a data folder change and can be shared by copying one file.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -65,16 +66,20 @@ pub struct ThemeImport {
 /// Each one is answerable to the contrast the interface needs: body text on the
 /// panel colour, dim text on the canvas, and the accent on the panel.
 pub fn builtins() -> Vec<ThemePreset> {
-    let preset = |id: &str, name: &str, colors: ThemeColors, outline: &str| ThemePreset {
+    let preset = |id: &str, name: &str, colors: ThemeColors, outline: Option<&str>| ThemePreset {
         id: id.to_string(),
         name: name.to_string(),
         colors,
-        capture_outline: Some(outline.to_string()),
+        capture_outline: outline.map(str::to_string),
         author: None,
         builtin: true,
     };
 
     vec![
+        // The two modes, listed first and carrying no outline of their own: the
+        // capture overlay colour stays whatever the user set.
+        preset("dark", "Dark", ThemeColors::dark(), None),
+        preset("light", "Light", ThemeColors::light(), None),
         preset(
             "midnight",
             "Midnight",
@@ -92,7 +97,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#85b1ff".into(),
                 danger: "#ff6b6b".into(),
             },
-            "#4f8cff",
+            Some("#4f8cff"),
         ),
         preset(
             "slate",
@@ -111,7 +116,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#7fd8d2".into(),
                 danger: "#ff7a7a".into(),
             },
-            "#4fc3bb",
+            Some("#4fc3bb"),
         ),
         preset(
             "sandstone",
@@ -130,7 +135,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#84491a".into(),
                 danger: "#b3261e".into(),
             },
-            "#a75f24",
+            Some("#a75f24"),
         ),
         preset(
             "forest",
@@ -149,7 +154,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#6cd9a2".into(),
                 danger: "#ff6b6b".into(),
             },
-            "#3fbf7f",
+            Some("#3fbf7f"),
         ),
         preset(
             "mono",
@@ -168,7 +173,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#ffffff".into(),
                 danger: "#ff5c5c".into(),
             },
-            "#d8d8d8",
+            Some("#d8d8d8"),
         ),
         preset(
             "high-contrast",
@@ -187,7 +192,7 @@ pub fn builtins() -> Vec<ThemePreset> {
                 accent_hi: "#ffe95c".into(),
                 danger: "#ff5252".into(),
             },
-            "#ffd400",
+            Some("#ffd400"),
         ),
     ]
 }
@@ -496,7 +501,12 @@ mod tests {
     #[test]
     fn bundled_presets_have_valid_colors_and_outlines() {
         let presets = builtins();
-        assert!(presets.len() >= 6);
+        assert!(presets.len() >= 8);
+        // Dark and Light lead the list, so the picker can offer them as presets.
+        assert_eq!(presets[0].id, "dark");
+        assert_eq!(presets[1].id, "light");
+        assert_eq!(presets[0].colors, ThemeColors::dark());
+        assert_eq!(presets[1].colors, ThemeColors::light());
         for preset in presets {
             assert!(preset.builtin);
             for hex in [
@@ -508,7 +518,9 @@ mod tests {
                 assert!(is_hex_color(hex), "{} has {hex}", preset.id);
             }
             assert!(!preset.name.is_empty());
-            assert!(preset.capture_outline.is_some());
+            if let Some(outline) = &preset.capture_outline {
+                assert!(is_hex_color(outline), "{} has outline {outline}", preset.id);
+            }
         }
     }
 
